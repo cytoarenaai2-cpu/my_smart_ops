@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 from datetime import date
 from typing import Optional
 import httpx
@@ -48,10 +48,10 @@ class TelegramBotRunner:
 
         await self.send_message(
             chat_id, 
-            "⏳ *تم استلام الصورة بنجاح!*\nجاري قراءة وتفريغ الفاتورة بنموذج Gemini 3.6 Flash وتدقيق الحسابات..."
+            "⏳ *تم استلام الصورة بنجاح!*\nجاري قراءة وتفريغ الفاتورة بنموذج الذكاء الاصطناعي وتدقيق الحسابات والضريبة..."
         )
 
-        async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=45.0, verify=False) as client:
             get_file_res = await client.get(f"{self.base_url}/getFile?file_id={file_id}", headers=self.headers)
             if get_file_res.status_code != 200:
                 await self.send_message(chat_id, "❌ تعذر جلب رابط الصورة من تيليجرام.")
@@ -65,6 +65,7 @@ class TelegramBotRunner:
             
             image_bytes = dl_res.content
 
+        print(f"[TelegramBot] Received photo ({len(image_bytes)} bytes). Parsing with AI...", flush=True)
         extracted_data = await AIParserService.parse_document(
             image_bytes=image_bytes,
             text_content=caption,
@@ -117,6 +118,15 @@ class TelegramBotRunner:
         await self._process_and_save_data(chat_id, extracted_data)
 
     async def _process_and_save_data(self, chat_id: int, extracted_data: ExtractedDocumentData):
+        if extracted_data.notes == "API_TEMPORARY_ERROR":
+            msg = (
+                "⚠️ *تعذر قراءة الصورة حالياً:*\n"
+                "حدث بطء أو ضغط مؤقت في الاتصال بنماذج الذكاء الاصطناعي.\n\n"
+                "🔄 يرجى إعادة إرسال الصورة الآن وسيتم معالجتها وتفريغها بنجاح."
+            )
+            await self.send_message(chat_id, msg)
+            return
+
         # منع تسجيل أي عمليات وهمية أو صفرية
         if extracted_data.total_amount <= 0 and len(extracted_data.items) == 0:
             msg = (

@@ -1,12 +1,12 @@
-﻿import os
+import os
 import sys
 import asyncio
 
 # ضبط مخرجات الشاشة لتدعم UTF-8 على ويندوز
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
 
 # إضافة مجلد backend إلى مسار بايثون
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
