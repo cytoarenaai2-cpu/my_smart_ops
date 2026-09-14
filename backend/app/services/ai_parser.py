@@ -47,11 +47,11 @@ class AIParserService:
     ) -> ExtractedDocumentData:
         api_key = settings.GEMINI_API_KEY
         
-        if api_key and image_bytes:
+        if api_key:
             try:
                 return await cls._call_gemini_vision(api_key, image_bytes, mime_type, text_content)
             except Exception as e:
-                print(f"[AIParserService] Error calling Gemini API: {e}")
+                print(f"[AIParserService] Gemini API call error: {e}, falling back to smart extractor")
         
         return cls._mock_parser(text_content)
 
@@ -59,32 +59,33 @@ class AIParserService:
     async def _call_gemini_vision(
         cls, 
         api_key: str, 
-        image_bytes: bytes, 
+        image_bytes: Optional[bytes], 
         mime_type: str,
         user_text: Optional[str]
     ) -> ExtractedDocumentData:
-        base64_data = base64.b64encode(image_bytes).decode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        # استخدام موديل gemini-3.6-flash المدعوم حالياً في بيئة 2026
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
         
+        parts = [{"text": PARSING_SYSTEM_PROMPT + (f"\nمعلومات المستند أو الملاحظات: {user_text}" if user_text else "")}]
+        
+        if image_bytes:
+            base64_data = base64.b64encode(image_bytes).decode("utf-8")
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64_data
+                }
+            })
+
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": PARSING_SYSTEM_PROMPT + (f"\nمعلومات إضافية: {user_text}" if user_text else "")},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": base64_data
-                        }
-                    }
-                ]
-            }],
+            "contents": [{"parts": parts}],
             "generationConfig": {
                 "response_mime_type": "application/json",
                 "temperature": 0.1
             }
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             res_json = response.json()
