@@ -1,4 +1,4 @@
-﻿let trendChartInstance = null;
+let trendChartInstance = null;
 let paymentChartInstance = null;
 
 // Initial Load
@@ -70,7 +70,7 @@ async function fetchRecentTransactions() {
     if (!txs || txs.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="7" class="text-center py-8 text-slate-400">
+          <td colspan="8" class="text-center py-8 text-slate-400">
             لا توجد أي عمليات مسجلة حتى الآن. سجل أول عملية من هاتفك عبر تيليجرام أو ارفع صورة فاتورة لتظهر هنا فوراً!
           </td>
         </tr>
@@ -88,7 +88,37 @@ async function fetchRecentTransactions() {
       
       const isSale = t.raw_type === "SALE";
       const typeBadgeClass = isSale ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-rose-500/20 text-rose-300 border-rose-500/30";
-      const statusBadgeClass = t.status === "معتمد" ? "text-emerald-400 font-semibold" : "text-amber-400 font-semibold";
+      const isApproved = t.status === "معتمد";
+      const statusBadgeClass = isApproved ? "text-emerald-400 font-semibold" : "text-amber-400 font-semibold";
+
+      let statusHtml = `<div class="${statusBadgeClass}">${t.status}</div>`;
+      if (!isApproved && t.flags && t.flags.length > 0) {
+        statusHtml += `
+          <div class="text-[10px] text-amber-300/80 mt-1 max-w-[220px] truncate" title="${t.flags.join(' | ')}">
+            ⚠️ ${t.flags[0]}
+          </div>
+        `;
+      }
+
+      let actionHtml = '';
+      if (!isApproved) {
+        actionHtml = `
+          <button onclick="approveTransaction('${t.id}')" 
+                  id="approve-btn-${t.id}"
+                  title="اعتماد وتأكيد مطابقة العملية بعد مراجعتها"
+                  class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer">
+            <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
+            <span>اعتماد العملية</span>
+          </button>
+        `;
+      } else {
+        actionHtml = `
+          <span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[11px] font-medium">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+            <span>معتمد</span>
+          </span>
+        `;
+      }
 
       return `
         <tr class="hover:bg-slate-800/40 transition">
@@ -102,14 +132,81 @@ async function fetchRecentTransactions() {
             ${paymentsText.length > 0 ? paymentsText.join(" | ") : "نقد"}
           </td>
           <td class="p-3 font-mono text-slate-400">${Number(t.tax_amount).toFixed(3)} د.أ</td>
-          <td class="p-3 ${statusBadgeClass}">${t.status}</td>
+          <td class="p-3">${statusHtml}</td>
+          <td class="p-3 text-center">${actionHtml}</td>
         </tr>
       `;
     }).join("");
 
+    if (window.lucide) {
+      window.lucide.createIcons();
+    }
+
   } catch (err) {
     console.error("Transactions log error:", err);
   }
+}
+
+// Handler for manual approval of reviewed transactions
+window.approveTransaction = async function(txId) {
+  const btn = document.getElementById(`approve-btn-${txId}`);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="inline-block animate-spin text-xs">⏳</span> جاري الاعتماد...`;
+  }
+
+  try {
+    const res = await fetch(`/api/v1/analytics/transactions/${txId}/approve`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || "فشل اعتماد العملية");
+    }
+
+    const data = await res.json();
+    showToast(data.message, "success");
+
+    // تحديث كافة البيانات في لوحة التحكم وسجل العمليات فورياً
+    await fetchAllData();
+  } catch (err) {
+    alert("حدث خطأ أثناء اعتماد العملية: " + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i data-lucide="check-check" class="w-3.5 h-3.5"></i> <span>اعتماد العملية</span>`;
+      if (window.lucide) window.lucide.createIcons();
+    }
+  }
+};
+
+// Toast notification helper
+function showToast(message, type = "success") {
+  let container = document.getElementById("toastContainer");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toastContainer";
+    container.className = "fixed bottom-5 left-5 z-50 flex flex-col gap-2 pointer-events-none";
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement("div");
+  const isSuccess = type === "success";
+  const bg = isSuccess ? "bg-emerald-950/95 border-emerald-500/50 text-emerald-200" : "bg-rose-950/95 border-rose-500/50 text-rose-200";
+  const icon = isSuccess ? "check-circle-2" : "alert-circle";
+  toast.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-2xl text-xs font-medium transition-all duration-300 transform translate-y-2 opacity-0 flex items-center gap-2.5 backdrop-blur-md ${bg}`;
+  toast.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 flex-shrink-0 text-emerald-400"></i> <span>${message}</span>`;
+  container.appendChild(toast);
+
+  if (window.lucide) window.lucide.createIcons();
+
+  setTimeout(() => {
+    toast.classList.remove("translate-y-2", "opacity-0");
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.add("opacity-0", "translate-y-2");
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
 }
 
 // 4. Render KPIs

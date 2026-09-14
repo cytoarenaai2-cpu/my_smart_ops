@@ -1,4 +1,4 @@
-﻿from datetime import date, timedelta
+from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
@@ -130,8 +130,9 @@ def get_recent_transactions(
 
     result = []
     for t in txs:
+        unresolved_flags = [f.message for f in t.audit_flags if not f.resolved]
         status = "معتمد"
-        if t.audit_flags and any(not f.resolved for f in t.audit_flags):
+        if unresolved_flags:
             status = "يحتاج مراجعة"
 
         result.append({
@@ -145,10 +146,50 @@ def get_recent_transactions(
             "tax_amount": round(t.tax_amount, 3),
             "payment_breakdown": t.payment_breakdown or {},
             "status": status,
+            "flags": unresolved_flags,
             "notes": t.notes or ""
         })
 
     return result
+
+
+@router.post("/transactions/{transaction_id}/approve")
+def approve_transaction(transaction_id: str, db: Session = Depends(get_db)):
+    """
+    اعتماد العملية المحاسبية وإغلاق ملاحظات وفروقات التدقيق المرتبطة بها يدوياً من قبل المستخدم/المحاسب.
+    """
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="لم يتم العثور على العملية المطلوبة.")
+
+    # 1. تسوية وإغلاق جميع تنبيهات وفروقات التدقيق للعملية
+    for flag in tx.audit_flags:
+        flag.resolved = True
+
+    # 2. تحديث حالة المستند الأصلي المرتبط
+    if tx.document:
+        tx.document.status = "PROCESSED"
+
+    # 3. إجازة المصروف ضريبياً ومحاسبياً
+    tx.is_deductible_expense = True
+
+    # 4. توثيق الاعتماد اليدوي في الملاحظات
+    approval_note = "[تم الاعتماد والمطابقة يدوياً بواسطة الإدارة]"
+    if tx.notes:
+        if approval_note not in tx.notes:
+            tx.notes = f"{tx.notes} | {approval_note}"
+    else:
+        tx.notes = approval_note
+
+    db.commit()
+    db.refresh(tx)
+
+    return {
+        "success": True,
+        "message": "تم اعتماد العملية بنجاح وتسوية كافة ملاحظات وفروقات التدقيق.",
+        "transaction_id": tx.id,
+        "status": "معتمد"
+    }
 
 
 @router.post("/reset-data")
