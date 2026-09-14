@@ -156,14 +156,19 @@ def test_daily_morning_brief_generation(db_session):
     assert "سلسلة مطاعم النور" in brief["whatsapp_formatted_text"]
     assert "فرع الشميساني" in brief["whatsapp_formatted_text"]
 
-def test_api_root_and_documents_upload(client):
-    """اختبار نقاط نهاية API الفعلية (Root & Document Upload)"""
-    # 1. Root check
-    root_res = client.get("/")
-    assert root_res.status_code == 200
-    assert root_res.json()["currency"] == "JOD"
+def test_api_endpoints_and_dashboard(client):
+    """اختبار نقاط نهاية API الفعلية ولوحة التحكم Dashboard"""
+    # 1. Health check
+    health_res = client.get("/api/health")
+    assert health_res.status_code == 200
+    assert health_res.json()["currency"] == "JOD"
 
-    # 2. Upload document (simulation via text notes)
+    # 2. Dashboard UI HTML check
+    dash_res = client.get("/dashboard")
+    assert dash_res.status_code == 200
+    assert "المساعد المالي والتنفيذي الذكي" in dash_res.text
+
+    # 3. Upload document
     upload_res = client.post(
         "/api/v1/documents/upload",
         data={"text_notes": "تقرير إغلاق كاشير يومي مبيعات فرع الجبيهة"}
@@ -173,15 +178,15 @@ def test_api_root_and_documents_upload(client):
     assert data["success"] is True
     assert data["extracted_summary"]["type"] == "SALE"
 
-    # 3. Analytics brief check
+    # 4. Analytics brief check
     brief_res = client.get("/api/v1/analytics/daily-brief")
     assert brief_res.status_code == 200
     brief_data = brief_res.json()
     assert brief_data["metrics"]["sales_total"] > 0
     assert "صباح الخير" in brief_data["whatsapp_formatted_text"]
 
-    # 4. Dashboard summary check
-    dash_res = client.get("/api/v1/analytics/dashboard-summary?days=7")
-    assert dash_res.status_code == 200
-    dash_data = dash_res.json()
-    assert dash_data["kpis"]["total_sales"] > 0
+    # 5. Dashboard summary check
+    summary_res = client.get("/api/v1/analytics/dashboard-summary?days=7")
+    assert summary_res.status_code == 200
+    summary_data = summary_res.json()
+    assert summary_data["kpis"]["total_sales"] > 0
