@@ -20,9 +20,14 @@ class Organization(Base):
     currency = Column(String(10), default="JOD")
     
     # Phase 2 Tax Compliance fields (Ready in schema)
-    tax_number = Column(String(50), nullable=True)  # ????? ??????? / ?????? ???????
+    tax_number = Column(String(50), nullable=True)  # الرقم الضريبي / الرقم الوطني للمنشأة
     is_tax_registered = Column(Boolean, default=False)
     tax_filing_period = Column(String(20), default="MONTHLY") # MONTHLY, BIMONTHLY
+
+    # Phase 3 Automation & Telegram Briefing fields
+    telegram_chat_id = Column(String(50), nullable=True)
+    auto_daily_brief_enabled = Column(Boolean, default=True)
+    daily_brief_time = Column(String(10), default="08:30")
     
     created_at = Column(DateTime, default=utc_now)
 
@@ -37,7 +42,7 @@ class Branch(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False)
-    name = Column(String(100), nullable=False)  # e.g., '??? ???????', '??? ???????'
+    name = Column(String(100), nullable=False)  # e.g., 'فرع خلدا', 'الفرع الرئيسي'
     manager_name = Column(String(100), nullable=True)
     phone_number = Column(String(30), nullable=True)
     created_at = Column(DateTime, default=utc_now)
@@ -93,8 +98,8 @@ class Transaction(Base):
     # Phase 2 Tax Compliance & JoFotara Fields
     tax_status = Column(String(30), default="STANDARD_16")  # STANDARD_16, REDUCED_TAX, ZERO_TAX, EXEMPT
     is_e_invoice_compliant = Column(Boolean, default=False)
-    supplier_tax_id = Column(String(50), nullable=True)  # ????? ??????? ??????
-    is_deductible_expense = Column(Boolean, default=True)  # ???? ?????? ???????
+    supplier_tax_id = Column(String(50), nullable=True)  # الرقم الضريبي للمورد
+    is_deductible_expense = Column(Boolean, default=True)  # مؤهل للخصم الضريبي
     
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)

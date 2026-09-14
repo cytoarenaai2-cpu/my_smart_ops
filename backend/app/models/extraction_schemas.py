@@ -4,9 +4,10 @@ import re
 from pydantic import BaseModel, Field, model_validator
 
 class DocumentTypeEnum(str, Enum):
-    SALES_Z_REPORT = "SALES_Z_REPORT"       # كشف مبيعات كاشير يومي
-    EXPENSE_RECEIPT = "EXPENSE_RECEIPT"     # إيصال مصروف يومي
-    PURCHASE_INVOICE = "PURCHASE_INVOICE"   # فاتورة شراء من مورد
+    SALES_Z_REPORT = "SALES_Z_REPORT"       # كشف مبيعات كاشير يومي Z-Report
+    SALES_RECEIPT = "SALES_RECEIPT"         # فاتورة مبيعات زبون / شيك طاولة مطعم / كاشير POS
+    EXPENSE_RECEIPT = "EXPENSE_RECEIPT"     # إيصال مصروف يومي ونثريات
+    PURCHASE_INVOICE = "PURCHASE_INVOICE"   # فاتورة شراء وتوريد من مورد
     BANK_STATEMENT = "BANK_STATEMENT"       # كشف بنكي أو إيصال CliQ
     OTHER = "OTHER"
 
@@ -93,12 +94,18 @@ class ExtractedDocumentData(BaseModel):
             
         # 1. تنظيف نوع المستند
         raw_type = str(data.get("document_type", "")).upper()
-        if any(w in raw_type for w in ["SALES", "Z_REPORT", "Z REPORT", "CLOSING"]):
+        if "SALES_RECEIPT" in raw_type or "RECEIPT_SALE" in raw_type:
+            data["document_type"] = DocumentTypeEnum.SALES_RECEIPT
+        elif any(w in raw_type for w in ["SALES", "Z_REPORT", "Z REPORT", "CLOSING"]):
             data["document_type"] = DocumentTypeEnum.SALES_Z_REPORT
-        elif any(w in raw_type for w in ["EXPENSE", "RECEIPT", "VOUCHER", "COST"]):
-            data["document_type"] = DocumentTypeEnum.EXPENSE_RECEIPT
-        elif any(w in raw_type for w in ["PURCHASE", "INVOICE", "SUPPLIER", "BILL"]):
+        elif any(w in raw_type for w in ["PURCHASE", "SUPPLIER"]):
             data["document_type"] = DocumentTypeEnum.PURCHASE_INVOICE
+        elif any(w in raw_type for w in ["EXPENSE", "VOUCHER", "COST"]):
+            data["document_type"] = DocumentTypeEnum.EXPENSE_RECEIPT
+        elif any(w in raw_type for w in ["INVOICE", "BILL"]):
+            data["document_type"] = DocumentTypeEnum.PURCHASE_INVOICE
+        elif any(w in raw_type for w in ["RECEIPT"]):
+            data["document_type"] = DocumentTypeEnum.EXPENSE_RECEIPT
         elif any(w in raw_type for w in ["BANK", "CLIQ", "STATEMENT"]):
             data["document_type"] = DocumentTypeEnum.BANK_STATEMENT
         elif raw_type not in [e.value for e in DocumentTypeEnum]:

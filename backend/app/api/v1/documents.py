@@ -22,17 +22,29 @@ async def upload_and_process_document(
     db: Session = Depends(get_db)
 ):
     """
-    ??? ???? ?????? ?? ??? ????? Z-Report ???????? ?????? ??????? ????????? ?? ??????? ???????.
+    رفع ومعالجة مستند أو صورة إغلاق كاشير Z-Report واستخراج المبالغ والضرائب والتفاصيل آلياً.
     """
-    # ?????? ?? ???? ????? ???????? ?? ??????? ??????? ???????
+    # التحقق من وجود المنشأة الافتراضية أو إنشاؤها تلقائياً
     if not organization_id:
         org = db.query(Organization).first()
         if not org:
-            org = Organization(name="????? ????? ????????", industry_type="retail", currency="JOD")
+            org = Organization(name="المؤسسة التجارية", industry_type="retail", currency="JOD")
             db.add(org)
             db.commit()
             db.refresh(org)
         organization_id = org.id
+    else:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+
+    business_context = None
+    if org:
+        branches_list = [b.name for b in org.branches] if org.branches else []
+        business_context = {
+            "business_name": org.name,
+            "industry_type": org.industry_type,
+            "tax_number": org.tax_number,
+            "branches": branches_list
+        }
 
     image_bytes = None
     file_hash = None
@@ -43,20 +55,21 @@ async def upload_and_process_document(
         file_hash = hashlib.sha256(image_bytes).hexdigest()
         mime_type = file.content_type or "image/jpeg"
 
-        # ?????? ?? ??? ????? ??? ??? ????????
+        # التحقق من عدم تكرار رفع نفس المستند
         existing_doc = db.query(Document).filter(
             Document.organization_id == organization_id,
             Document.file_hash == file_hash
         ).first()
 
         if existing_doc:
-            raise HTTPException(status_code=400, detail="?? ??? ??? ????????/??????? ?????? ?? ?????? ????? ???????.")
+            raise HTTPException(status_code=400, detail="تم رفع هذه الفاتورة/المستند مسبقاً في النظام لمنع تكرار القيود.")
 
     # 1. الاستخراج الذكي عبر نماذج الذكاء الاصطناعي
     extracted_data: ExtractedDocumentData = await AIParserService.parse_document(
         image_bytes=image_bytes,
         text_content=text_notes,
-        mime_type=mime_type
+        mime_type=mime_type,
+        business_context=business_context
     )
 
     if extracted_data.notes == "API_TEMPORARY_ERROR":
@@ -68,7 +81,7 @@ async def upload_and_process_document(
     # 2. التدقيق المحاسبي وفحص الامتثال الضريبي والرياضي
     validation = FinancialValidator.validate(extracted_data)
 
-    # 3. ??? ??????? ??????
+    # 3. حفظ المستند في قاعدة البيانات
     doc = Document(
         organization_id=organization_id,
         branch_id=branch_id,
@@ -81,8 +94,8 @@ async def upload_and_process_document(
     db.commit()
     db.refresh(doc)
 
-    # 4. ??? ???????? ???????
-    tx_type = "SALE" if extracted_data.document_type == DocumentTypeEnum.SALES_Z_REPORT else "EXPENSE"
+    # 4. حفظ المعاملة المالية
+    tx_type = "SALE" if extracted_data.document_type in [DocumentTypeEnum.SALES_Z_REPORT, DocumentTypeEnum.SALES_RECEIPT] else "EXPENSE"
     if extracted_data.document_type == DocumentTypeEnum.PURCHASE_INVOICE:
         tx_type = "PURCHASE"
 
@@ -114,7 +127,7 @@ async def upload_and_process_document(
     db.commit()
     db.refresh(tx)
 
-    # 5. ??? ???? ???????? ?? ????
+    # 5. حفظ بنود المعاملة إن وجدت
     for item in extracted_data.items:
         t_item = TransactionItem(
             transaction_id=tx.id,
@@ -127,7 +140,7 @@ async def upload_and_process_document(
         )
         db.add(t_item)
 
-    # 6. ????? ??????? ??????? ?? ??? ???? ?????
+    # 6. تسجيل تنبيهات التدقيق في حال وجود ملاحظات أو فروقات
     for flag in validation.flags:
         a_flag = AuditFlag(
             organization_id=organization_id,
@@ -143,7 +156,7 @@ async def upload_and_process_document(
 
     return {
         "success": True,
-        "message": "?? ????? ??????? ????? ??????? ?? ???????.",
+        "message": "تمت معالجة وتدقيق المستند بنجاح.",
         "document_id": doc.id,
         "transaction_id": tx.id,
         "validation_status": validation.status,

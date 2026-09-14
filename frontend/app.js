@@ -1,21 +1,44 @@
 let trendChartInstance = null;
 let paymentChartInstance = null;
+let cachedTransactions = [];
+let currentOrgData = null;
+let currentOrgBranches = [];
+
+const INDUSTRY_LABELS = {
+  "restaurant": "مطاعم وكافيهات",
+  "retail": "تجزئة وسوبرماركت",
+  "pharmacy": "صيدليات ومستلزمات",
+  "fashion": "أزياء وملابس",
+  "contracting": "مقاولات وإنشاءات",
+  "services": "خدمات وصيانة",
+  "wholesale": "تجارة جملة وتوزيع",
+  "other": "نشاط تجاري عام"
+};
 
 // Initial Load
 document.addEventListener("DOMContentLoaded", () => {
   fetchAllData();
+  setupOrgSettingsModal();
+  setupTransactionFilters();
   setupUploadForm();
   setupBriefButton();
   setupTaxModal();
+  setupReviewModal();
   setupResetButton();
 
-  document.getElementById("refreshBtn").addEventListener("click", () => {
-    fetchAllData();
-  });
+  const refreshBtn = document.getElementById("refreshBtn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => fetchAllData());
+  }
+  const refreshBtnMobile = document.getElementById("refreshBtnMobile");
+  if (refreshBtnMobile) {
+    refreshBtnMobile.addEventListener("click", () => fetchAllData());
+  }
 });
 
 async function fetchAllData() {
   await Promise.all([
+    fetchOrgProfile(),
     fetchDashboardData(),
     fetchTaxData(),
     fetchRecentTransactions()
@@ -56,22 +79,56 @@ async function fetchTaxData() {
   }
 }
 
-// 3. Fetch Recent Transactions (The Real Audit Log)
+// 3. Fetch Recent Transactions (The Real Audit Log with Filters)
+function getFilterQueryParams() {
+  const params = new URLSearchParams();
+  params.append("limit", "100");
+
+  const searchInput = document.getElementById("filterSearchInput");
+  if (searchInput && searchInput.value.trim()) {
+    params.append("search", searchInput.value.trim());
+  }
+
+  const branchSelect = document.getElementById("filterBranchSelect");
+  if (branchSelect && branchSelect.value && branchSelect.value !== "ALL") {
+    params.append("branch", branchSelect.value);
+  }
+
+  const typeSelect = document.getElementById("filterTypeSelect");
+  if (typeSelect && typeSelect.value && typeSelect.value !== "ALL") {
+    params.append("tx_type", typeSelect.value);
+  }
+
+  const statusSelect = document.getElementById("filterStatusSelect");
+  if (statusSelect && statusSelect.value && statusSelect.value !== "ALL") {
+    params.append("status", statusSelect.value);
+  }
+
+  const daysSelect = document.getElementById("filterDaysSelect");
+  if (daysSelect && daysSelect.value && daysSelect.value !== "ALL") {
+    params.append("days", daysSelect.value);
+  }
+
+  return params.toString();
+}
+
 async function fetchRecentTransactions() {
   try {
-    const res = await fetch("/api/v1/analytics/recent-transactions?limit=50");
+    const qs = getFilterQueryParams();
+    const res = await fetch(`/api/v1/analytics/recent-transactions?${qs}`);
     if (!res.ok) throw new Error("فشل جلب سجل العمليات");
     const txs = await res.json();
+    cachedTransactions = txs;
 
     const badge = document.getElementById("txCountBadge");
-    badge.textContent = `${txs.length} عمليات مسجلة`;
+    if (badge) badge.textContent = `${txs.length} عمليات مسجلة`;
 
     const tbody = document.getElementById("transactionsTableBody");
     if (!txs || txs.length === 0) {
       tbody.innerHTML = `
         <tr>
           <td colspan="8" class="text-center py-8 text-slate-400">
-            لا توجد أي عمليات مسجلة حتى الآن. سجل أول عملية من هاتفك عبر تيليجرام أو ارفع صورة فاتورة لتظهر هنا فوراً!
+            لا توجد أي عمليات تطابق معايير البحث والفلترة المحددة.
           </td>
         </tr>
       `;
@@ -91,49 +148,73 @@ async function fetchRecentTransactions() {
       const isApproved = t.status === "معتمد";
       const statusBadgeClass = isApproved ? "text-emerald-400 font-semibold" : "text-amber-400 font-semibold";
 
-      let statusHtml = `<div class="${statusBadgeClass}">${t.status}</div>`;
+      let statusHtml = `<div class="${statusBadgeClass} flex items-center gap-1">`;
+      if (isApproved) {
+        statusHtml += `<span>✅ معتمد ومطابق</span>`;
+      } else {
+        statusHtml += `<span>⚠️ يحتاج مراجعة</span>`;
+      }
+      statusHtml += `</div>`;
+
       if (!isApproved && t.flags && t.flags.length > 0) {
         statusHtml += `
-          <div class="text-[10px] text-amber-300/80 mt-1 max-w-[220px] truncate" title="${t.flags.join(' | ')}">
+          <button onclick="openReviewModal('${t.id}')" 
+                  class="text-[11px] text-amber-300 hover:text-amber-200 underline mt-1 text-right block max-w-[240px] truncate" 
+                  title="${t.flags.join(' | ')} (اضغط لمراجعة الفارق وتعديل البيانات)">
             ⚠️ ${t.flags[0]}
-          </div>
+          </button>
         `;
       }
 
       let actionHtml = '';
       if (!isApproved) {
         actionHtml = `
-          <button onclick="approveTransaction('${t.id}')" 
-                  id="approve-btn-${t.id}"
-                  title="اعتماد وتأكيد مطابقة العملية بعد مراجعتها"
-                  class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer">
-            <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
-            <span>اعتماد العملية</span>
-          </button>
+          <div class="flex items-center justify-center gap-1.5 flex-nowrap">
+            <button onclick="openReviewModal('${t.id}')" 
+                    title="مراجعة وتعديل المبالغ وإدخال البيانات الناقصة"
+                    class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 hover:border-amber-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+              <span>مراجعة وتعديل</span>
+            </button>
+            <button onclick="approveTransaction('${t.id}')" 
+                    id="approve-btn-${t.id}"
+                    title="اعتماد وتأكيد مطابقة العملية كما هي"
+                    class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+              <span>اعتماد</span>
+            </button>
+          </div>
         `;
       } else {
         actionHtml = `
-          <span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[11px] font-medium">
-            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
-            <span>معتمد</span>
-          </span>
+          <div class="flex items-center justify-center gap-1.5">
+            <span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+              <span>معتمد</span>
+            </span>
+            <button onclick="openReviewModal('${t.id}')"
+                    title="تعديل بيانات هذه العملية"
+                    class="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+              <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
         `;
       }
 
       return `
         <tr class="hover:bg-slate-800/40 transition">
-          <td class="p-3 text-slate-400 font-mono">${t.date}</td>
-          <td class="p-3">
+          <td class="p-2.5 sm:p-3 text-slate-400 font-mono whitespace-nowrap">${t.date}</td>
+          <td class="p-2.5 sm:p-3 whitespace-nowrap">
             <span class="border ${typeBadgeClass} px-2 py-0.5 rounded text-[11px] font-semibold">${t.type}</span>
           </td>
-          <td class="p-3 font-semibold text-slate-200">${t.merchant_or_branch}</td>
-          <td class="p-3 font-mono font-bold text-white text-sm">${Number(t.total_amount).toFixed(3)} د.أ</td>
-          <td class="p-3 text-slate-300 text-[11px]">
+          <td class="p-2.5 sm:p-3 font-semibold text-slate-200 whitespace-nowrap">${t.merchant_or_branch}</td>
+          <td class="p-2.5 sm:p-3 font-mono font-bold text-white text-xs sm:text-sm whitespace-nowrap">${Number(t.total_amount).toFixed(3)} د.أ</td>
+          <td class="p-2.5 sm:p-3 text-slate-300 text-[11px] whitespace-nowrap">
             ${paymentsText.length > 0 ? paymentsText.join(" | ") : "نقد"}
           </td>
-          <td class="p-3 font-mono text-slate-400">${Number(t.tax_amount).toFixed(3)} د.أ</td>
-          <td class="p-3">${statusHtml}</td>
-          <td class="p-3 text-center">${actionHtml}</td>
+          <td class="p-2.5 sm:p-3 font-mono text-slate-400 whitespace-nowrap">${Number(t.tax_amount).toFixed(3)} د.أ</td>
+          <td class="p-2.5 sm:p-3">${statusHtml}</td>
+          <td class="p-2.5 sm:p-3 text-center whitespace-nowrap">${actionHtml}</td>
         </tr>
       `;
     }).join("");
@@ -147,7 +228,122 @@ async function fetchRecentTransactions() {
   }
 }
 
-// Handler for manual approval of reviewed transactions
+// 3.1 Open Interactive Review Modal
+window.openReviewModal = function(txId) {
+  const t = cachedTransactions.find(x => x.id === txId);
+  if (!t) return;
+
+  const modal = document.getElementById("reviewTxModal");
+  if (!modal) return;
+
+  document.getElementById("editTxId").value = t.id;
+  document.getElementById("editTxType").value = t.raw_type || "EXPENSE";
+  document.getElementById("editTxMerchant").value = t.merchant_or_branch || "";
+  document.getElementById("editTxTotal").value = Number(t.total_amount || 0).toFixed(3);
+  document.getElementById("editTxSubtotal").value = Number(t.subtotal || t.total_amount || 0).toFixed(3);
+  document.getElementById("editTxTax").value = Number(t.tax_amount || 0).toFixed(3);
+  document.getElementById("editTxTaxId").value = t.supplier_tax_id || "";
+
+  const pb = t.payment_breakdown || {};
+  document.getElementById("editTxCash").value = pb.cash !== undefined ? Number(pb.cash).toFixed(3) : Number(t.total_amount || 0).toFixed(3);
+  document.getElementById("editTxCard").value = pb.card !== undefined ? Number(pb.card).toFixed(3) : "0.000";
+  document.getElementById("editTxCliq").value = pb.cliq !== undefined ? Number(pb.cliq).toFixed(3) : "0.000";
+  document.getElementById("editTxDelivery").value = pb.delivery_apps !== undefined ? Number(pb.delivery_apps).toFixed(3) : "0.000";
+
+  document.getElementById("editTxNotes").value = t.notes || "";
+
+  // Populate Flags list
+  const flagsList = document.getElementById("reviewFlagsList");
+  if (t.flags && t.flags.length > 0) {
+    flagsList.innerHTML = t.flags.map(f => `<div>• ${f}</div>`).join("");
+    document.getElementById("reviewAlertBox").classList.remove("hidden");
+  } else {
+    flagsList.innerHTML = `<div>• العملية معتمدة أو لا توجد فروقات تدقيقية غير محلولة. يمكنك تعديل الحقول لتصحيح أو إعادة تصنيف المبالغ.</div>`;
+    document.getElementById("reviewAlertBox").classList.remove("hidden");
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+};
+
+window.closeReviewModal = function() {
+  const modal = document.getElementById("reviewTxModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+};
+
+// 3.2 Setup Review Modal Event Listeners
+function setupReviewModal() {
+  const modal = document.getElementById("reviewTxModal");
+  const closeBtn1 = document.getElementById("closeReviewModalBtn");
+  const closeBtn2 = document.getElementById("closeReviewModalBtn2");
+  const form = document.getElementById("reviewTxForm");
+
+  if (closeBtn1) closeBtn1.addEventListener("click", closeReviewModal);
+  if (closeBtn2) closeBtn2.addEventListener("click", closeReviewModal);
+
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeReviewModal();
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const txId = document.getElementById("editTxId").value;
+      if (!txId) return;
+
+      const saveBtn = document.getElementById("saveReviewBtn");
+      saveBtn.disabled = true;
+      const originalText = saveBtn.innerHTML;
+      saveBtn.innerHTML = `<span>⏳ جاري حفظ التعديلات والاعتماد...</span>`;
+
+      const payload = {
+        transaction_type: document.getElementById("editTxType").value,
+        merchant_or_supplier_name: document.getElementById("editTxMerchant").value.trim(),
+        total_amount: parseFloat(document.getElementById("editTxTotal").value) || 0,
+        subtotal: parseFloat(document.getElementById("editTxSubtotal").value) || 0,
+        tax_amount: parseFloat(document.getElementById("editTxTax").value) || 0,
+        supplier_tax_id: document.getElementById("editTxTaxId").value.trim(),
+        payment_breakdown: {
+          cash: parseFloat(document.getElementById("editTxCash").value) || 0,
+          card: parseFloat(document.getElementById("editTxCard").value) || 0,
+          cliq: parseFloat(document.getElementById("editTxCliq").value) || 0,
+          delivery_apps: parseFloat(document.getElementById("editTxDelivery").value) || 0
+        },
+        notes: document.getElementById("editTxNotes").value.trim(),
+        approve: true
+      };
+
+      try {
+        const res = await fetch(`/api/v1/analytics/transactions/${txId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "فشل حفظ التعديلات");
+
+        closeReviewModal();
+        await fetchAllData();
+        showToast(data.message || "تم حفظ التعديلات واعتماد وتحديث الحسابات بنجاح!", "success");
+      } catch (err) {
+        alert("خطأ أثناء حفظ العملية: " + err.message);
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalText;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+}
+
+// Handler for quick manual approval of reviewed transactions
 window.approveTransaction = async function(txId) {
   const btn = document.getElementById(`approve-btn-${txId}`);
   if (btn) {
@@ -173,7 +369,7 @@ window.approveTransaction = async function(txId) {
     alert("حدث خطأ أثناء اعتماد العملية: " + err.message);
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = `<i data-lucide="check-check" class="w-3.5 h-3.5"></i> <span>اعتماد العملية</span>`;
+      btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5"></i> <span>اعتماد</span>`;
       if (window.lucide) window.lucide.createIcons();
     }
   }
@@ -277,13 +473,13 @@ function renderRiskInvoices(invoices) {
 
   tbody.innerHTML = invoices.map(inv => `
     <tr class="hover:bg-slate-800/40 transition">
-      <td class="p-2.5 font-mono text-slate-200">${inv.invoice_number}</td>
-      <td class="p-2.5 text-slate-400">${inv.date}</td>
-      <td class="p-2.5 text-slate-200 font-medium">${inv.supplier_or_merchant}</td>
-      <td class="p-2.5 font-mono font-bold text-white">${Number(inv.amount).toFixed(3)} د.أ</td>
-      <td class="p-2.5 font-mono text-rose-400 font-semibold">${Number(inv.tax_amount).toFixed(3)} د.أ</td>
-      <td class="p-2.5 text-rose-300">
-        <span class="bg-rose-950/60 border border-rose-500/30 px-2 py-0.5 rounded text-[11px]">${inv.risk_reason}</span>
+      <td class="p-2 sm:p-2.5 font-mono text-slate-200 whitespace-nowrap">${inv.invoice_number}</td>
+      <td class="p-2 sm:p-2.5 text-slate-400 whitespace-nowrap">${inv.date}</td>
+      <td class="p-2 sm:p-2.5 text-slate-200 font-medium whitespace-nowrap">${inv.supplier_or_merchant}</td>
+      <td class="p-2 sm:p-2.5 font-mono font-bold text-white whitespace-nowrap">${Number(inv.amount).toFixed(3)} د.أ</td>
+      <td class="p-2 sm:p-2.5 font-mono text-rose-400 font-semibold whitespace-nowrap">${Number(inv.tax_amount).toFixed(3)} د.أ</td>
+      <td class="p-2 sm:p-2.5 text-rose-300">
+        <span class="bg-rose-950/60 border border-rose-500/30 px-2 py-0.5 rounded text-[11px] whitespace-nowrap">${inv.risk_reason}</span>
       </td>
     </tr>
   `).join("");
@@ -568,4 +764,259 @@ function setupTaxModal() {
   closeBtn1.addEventListener("click", closeModal);
   closeBtn2.addEventListener("click", closeModal);
   printBtn.addEventListener("click", () => window.print());
+}
+
+// Organization Profile & Branches Management
+function renderBranchFilterOptions() {
+  const sel = document.getElementById("filterBranchSelect");
+  if (!sel) return;
+  const currentVal = sel.value;
+  sel.innerHTML = `<option value="ALL">🏢 كل الفروع</option>`;
+  if (Array.isArray(currentOrgBranches)) {
+    currentOrgBranches.forEach(b => {
+      sel.innerHTML += `<option value="${b}">${b}</option>`;
+    });
+  }
+  if (currentVal && Array.isArray(currentOrgBranches) && currentOrgBranches.includes(currentVal)) {
+    sel.value = currentVal;
+  }
+}
+
+let filterSearchTimeout = null;
+function setupTransactionFilters() {
+  const searchInput = document.getElementById("filterSearchInput");
+  const branchSelect = document.getElementById("filterBranchSelect");
+  const typeSelect = document.getElementById("filterTypeSelect");
+  const statusSelect = document.getElementById("filterStatusSelect");
+  const daysSelect = document.getElementById("filterDaysSelect");
+  const clearBtn = document.getElementById("clearFiltersBtn");
+  const exportBtn = document.getElementById("exportCsvBtn");
+
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      clearTimeout(filterSearchTimeout);
+      filterSearchTimeout = setTimeout(() => {
+        fetchRecentTransactions();
+      }, 300);
+    });
+  }
+
+  [branchSelect, typeSelect, statusSelect, daysSelect].forEach(sel => {
+    if (sel) {
+      sel.addEventListener("change", () => fetchRecentTransactions());
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (searchInput) searchInput.value = "";
+      if (branchSelect) branchSelect.value = "ALL";
+      if (typeSelect) typeSelect.value = "ALL";
+      if (statusSelect) statusSelect.value = "ALL";
+      if (daysSelect) daysSelect.value = "ALL";
+      fetchRecentTransactions();
+    });
+  }
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => {
+      const qs = getFilterQueryParams();
+      window.location.href = `/api/v1/analytics/export/transactions?${qs}`;
+    });
+  }
+}
+
+async function fetchOrgProfile() {
+  try {
+    const res = await fetch("/api/v1/analytics/organization-profile");
+    if (!res.ok) return;
+    const data = await res.json();
+    currentOrgData = data;
+    currentOrgBranches = Array.isArray(data.branches) ? [...data.branches] : [];
+
+    const nameEl = document.getElementById("headerOrgName");
+    if (nameEl) nameEl.textContent = data.name || "المؤسسة التجارية";
+
+    const indEl = document.getElementById("headerOrgIndustry");
+    if (indEl) {
+      indEl.textContent = INDUSTRY_LABELS[data.industry_type] || data.industry_type || "نشاط تجاري";
+    }
+
+    const branchesEl = document.getElementById("branchesCountBadge");
+    if (branchesEl) {
+      const count = currentOrgBranches.length;
+      branchesEl.textContent = count > 0 ? `(${count} فروع)` : "(الفرع الرئيسي)";
+    }
+
+    renderBranchFilterOptions();
+  } catch (err) {
+    console.error("fetchOrgProfile error:", err);
+  }
+}
+
+function setupOrgSettingsModal() {
+  const modal = document.getElementById("orgSettingsModal");
+  const openBtn = document.getElementById("openOrgSettingsBtn");
+  const badgeBtn = document.getElementById("currentOrgBadge");
+  const closeBtn1 = document.getElementById("closeOrgModalBtn");
+  const closeBtn2 = document.getElementById("closeOrgModalBtn2");
+  const form = document.getElementById("orgSettingsForm");
+  const addBranchBtn = document.getElementById("addBranchBtn");
+  const newBranchInput = document.getElementById("newBranchInput");
+  const chipsContainer = document.getElementById("branchesChipsContainer");
+  const alertBox = document.getElementById("orgModalAlert");
+
+  if (!modal) return;
+
+  const renderChips = () => {
+    if (!chipsContainer) return;
+    if (currentOrgBranches.length === 0) {
+      chipsContainer.innerHTML = `<span class="text-slate-500 text-[11px] italic">لم يتم إضافة فروع منفصلة بعد (سيتم اعتماد الفرع الرئيسي تلقائياً).</span>`;
+      return;
+    }
+    chipsContainer.innerHTML = currentOrgBranches.map((b, idx) => `
+      <span class="inline-flex items-center gap-1.5 bg-indigo-950/80 border border-indigo-500/30 text-indigo-200 px-2.5 py-1 rounded-lg text-xs font-medium">
+        <span>${b}</span>
+        <button type="button" data-index="${idx}" class="remove-branch-btn text-indigo-400 hover:text-rose-400 hover:bg-slate-800 rounded p-0.5 transition" title="حذف الفرع">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </span>
+    `).join("");
+
+    chipsContainer.querySelectorAll(".remove-branch-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const idx = parseInt(btn.getAttribute("data-index"), 10);
+        currentOrgBranches.splice(idx, 1);
+        renderChips();
+      });
+    });
+  };
+
+  const addBranch = () => {
+    const val = newBranchInput.value.trim();
+    if (!val) return;
+    if (!currentOrgBranches.includes(val)) {
+      currentOrgBranches.push(val);
+      renderChips();
+    }
+    newBranchInput.value = "";
+    newBranchInput.focus();
+  };
+
+  if (addBranchBtn) {
+    addBranchBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      addBranch();
+    });
+  }
+
+  if (newBranchInput) {
+    newBranchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addBranch();
+      }
+    });
+  }
+
+  const openModal = () => {
+    if (alertBox) {
+      alertBox.className = "hidden rounded-xl p-3 text-xs";
+      alertBox.textContent = "";
+    }
+    if (currentOrgData) {
+      document.getElementById("orgNameInput").value = currentOrgData.name || "";
+      document.getElementById("orgIndustryInput").value = currentOrgData.industry_type || "restaurant";
+      document.getElementById("orgTaxInput").value = currentOrgData.tax_number || "";
+      currentOrgBranches = Array.isArray(currentOrgData.branches) ? [...currentOrgData.branches] : [];
+
+      const autoToggle = document.getElementById("autoBriefToggle");
+      if (autoToggle) autoToggle.checked = currentOrgData.auto_daily_brief_enabled !== false;
+      const briefTime = document.getElementById("dailyBriefTimeInput");
+      if (briefTime) briefTime.value = currentOrgData.daily_brief_time || "08:30";
+    }
+    renderChips();
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    if (window.lucide) lucide.createIcons();
+  };
+
+  const closeModal = () => {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  };
+
+  if (openBtn) openBtn.addEventListener("click", openModal);
+  if (badgeBtn) badgeBtn.addEventListener("click", openModal);
+  if (closeBtn1) closeBtn1.addEventListener("click", closeModal);
+  if (closeBtn2) closeBtn2.addEventListener("click", closeModal);
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const saveBtn = document.getElementById("saveOrgBtn");
+      const originalHtml = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = `<span>جاري حفظ وتطبيق الإعدادات...</span>`;
+
+      try {
+        const autoToggle = document.getElementById("autoBriefToggle");
+        const briefTime = document.getElementById("dailyBriefTimeInput");
+        const payload = {
+          name: document.getElementById("orgNameInput").value.trim(),
+          industry_type: document.getElementById("orgIndustryInput").value,
+          tax_number: document.getElementById("orgTaxInput").value.trim() || null,
+          branches: currentOrgBranches,
+          auto_daily_brief_enabled: autoToggle ? autoToggle.checked : true,
+          daily_brief_time: briefTime ? briefTime.value.trim() : "08:30"
+        };
+
+        const res = await fetch("/api/v1/analytics/organization-profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل حفظ بيانات المنشأة");
+        }
+
+        const updated = await res.json();
+        currentOrgData = updated;
+        currentOrgBranches = Array.isArray(updated.branches) ? [...updated.branches] : [];
+
+        // Update header UI
+        const nameEl = document.getElementById("headerOrgName");
+        if (nameEl) nameEl.textContent = updated.name;
+        const indEl = document.getElementById("headerOrgIndustry");
+        if (indEl) indEl.textContent = INDUSTRY_LABELS[updated.industry_type] || updated.industry_type;
+        const branchesEl = document.getElementById("branchesCountBadge");
+        if (branchesEl) {
+          branchesEl.textContent = currentOrgBranches.length > 0 ? `(${currentOrgBranches.length} فروع)` : "(الفرع الرئيسي)";
+        }
+
+        renderBranchFilterOptions();
+
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 rounded-xl p-3 text-xs flex items-center gap-2";
+          alertBox.innerHTML = `<span>✅ تم حفظ هوية المنشأة وفروعها والجدولة الصباحية بنجاح!</span>`;
+        }
+
+        setTimeout(() => {
+          closeModal();
+          fetchAllData();
+        }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 rounded-xl p-3 text-xs flex items-center gap-2";
+          alertBox.innerHTML = `<span>❌ خطأ: ${err.message}</span>`;
+        }
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalHtml;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
 }

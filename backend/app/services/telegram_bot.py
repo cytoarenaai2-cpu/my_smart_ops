@@ -1,6 +1,6 @@
 import asyncio
-from datetime import date
-from typing import Optional
+from datetime import date, datetime
+from typing import Optional, Dict, Any
 import httpx
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,7 @@ from app.services.daily_summary import DailySummaryService
 class TelegramBotRunner:
     """
     مشغل بوت تيليجرام بنظام الاستطلاع الفردي (Single Instance Long Polling).
-    دقيق 100% - لا يسجل أي أرقام وهمية أو مبالغ صفرية.
+    دقيق 100% - يدعم الصور والنصوص والفويس نوت والجدولة الصباحية الآلية.
     """
 
     def __init__(self, token: Optional[str] = None):
@@ -42,6 +42,72 @@ class TelegramBotRunner:
             except Exception as e:
                 print(f"[TelegramBot] send_message error: {e}")
 
+    def _update_org_chat_id(self, chat_id: int):
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if org and str(org.telegram_chat_id) != str(chat_id):
+                org.telegram_chat_id = str(chat_id)
+                db.commit()
+        except Exception as e:
+            print(f"[TelegramBot] _update_org_chat_id error: {e}")
+        finally:
+            db.close()
+
+    def _get_business_context(self) -> Optional[Dict[str, Any]]:
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if org:
+                branches = [b.name for b in org.branches] if org.branches else []
+                return {
+                    "business_name": org.name,
+                    "industry_type": org.industry_type,
+                    "tax_number": org.tax_number,
+                    "branches": branches
+                }
+            return None
+        except Exception as e:
+            print(f"[TelegramBot] _get_business_context error: {e}")
+            return None
+        finally:
+            db.close()
+
+    async def handle_voice(self, chat_id: int, voice_obj: dict):
+        file_id = voice_obj.get("file_id")
+        mime_type = voice_obj.get("mime_type", "audio/ogg")
+        if not mime_type or not mime_type.startswith("audio/"):
+            mime_type = "audio/ogg"
+
+        await self.send_message(
+            chat_id, 
+            "🎙️ *تم استلام التسجيل الصوتي بنجاح!*\nجاري الاستماع وتفريغ الأرقام والعمليات عبر الذكاء الاصطناعي وتدقيق الحسابات والضريبة..."
+        )
+
+        async with httpx.AsyncClient(timeout=50.0, verify=False) as client:
+            get_file_res = await client.get(f"{self.base_url}/getFile?file_id={file_id}", headers=self.headers)
+            if get_file_res.status_code != 200:
+                await self.send_message(chat_id, "❌ تعذر جلب رابط التسجيل الصوتي من تيليجرام.")
+                return
+
+            file_path = get_file_res.json().get("result", {}).get("file_path")
+            dl_res = await client.get(f"{self.file_base_url}/{file_path}", headers=self.headers)
+            if dl_res.status_code != 200:
+                await self.send_message(chat_id, "❌ فشل تحميل ملف الصوت.")
+                return
+            
+            audio_bytes = dl_res.content
+
+        print(f"[TelegramBot] Received voice note ({len(audio_bytes)} bytes). Parsing with AI audio...", flush=True)
+        biz_ctx = self._get_business_context()
+        extracted_data = await AIParserService.parse_document(
+            image_bytes=audio_bytes,
+            mime_type=mime_type,
+            business_context=biz_ctx
+        )
+
+        await self._process_and_save_data(chat_id, extracted_data)
+
     async def handle_photo(self, chat_id: int, photo_list: list, caption: Optional[str] = None):
         best_photo = photo_list[-1]
         file_id = best_photo.get("file_id")
@@ -66,10 +132,12 @@ class TelegramBotRunner:
             image_bytes = dl_res.content
 
         print(f"[TelegramBot] Received photo ({len(image_bytes)} bytes). Parsing with AI...", flush=True)
+        biz_ctx = self._get_business_context()
         extracted_data = await AIParserService.parse_document(
             image_bytes=image_bytes,
             text_content=caption,
-            mime_type="image/jpeg"
+            mime_type="image/jpeg",
+            business_context=biz_ctx
         )
 
         await self._process_and_save_data(chat_id, extracted_data)
@@ -81,10 +149,12 @@ class TelegramBotRunner:
             msg = (
                 "👋 *أهلاً بك في المساعد المالي والتنفيذي والضريبي الذكي!*\n\n"
                 "هذا البوت مرتبط مباشرة بلوحة التحكم والمحرك الضريبي الأردني (JoFotara):\n\n"
-                "📸 *لتسجيل فواتير ومبيعات:*\n"
+                "📸 *لتسجيل فواتير ومبيعات بالصور:*\n"
                 "صوّر بكاميرا هاتفك إغلاق الكاشير (Z-Report) أو أي فاتورة شراء أو إيصال مصروف وأرسلها هنا فوراً.\n\n"
+                "🎙️ *لتسجيل فويس نوت صوتي:*\n"
+                "سجل رسالة صوتية سريعة بصوتك (مثلاً: _'مبيعات فرع خلدا اليوم 520 كاش و400 فيزا ودفعنا للموزع 80'_) وسيقوم الذكاء الاصطناعي بتفريغها وتدقيقها فورياً!\n\n"
                 "✍️ *للتسجيل السريع بالكتابة:*\n"
-                "اكتب مثلاً: _'مبيعات فرع خلدا اليوم كاش 520 وبطاقات 400 وكليك 150'_\n\n"
+                "اكتب نصاً مثل: _'مبيعات فرع خلدا اليوم كاش 520 وبطاقات 400 وكليك 150'_\n\n"
                 "📊 *لطلب تقرير فوري:*\n"
                 "أرسل كلمة *تقرير* أو أمر /brief للحصول على الملخص التنفيذي الحقيقي للعمليات."
             )
@@ -114,7 +184,11 @@ class TelegramBotRunner:
 
         # تحليل النص واستخراج البيانات الحسابية
         await self.send_message(chat_id, "⏳ جاري تحليل النص واستخراج الأرقام الحقيقية بدقة...")
-        extracted_data = await AIParserService.parse_document(text_content=text_clean)
+        biz_ctx = self._get_business_context()
+        extracted_data = await AIParserService.parse_document(
+            text_content=text_clean,
+            business_context=biz_ctx
+        )
         await self._process_and_save_data(chat_id, extracted_data)
 
     async def _process_and_save_data(self, chat_id: int, extracted_data: ExtractedDocumentData):
@@ -161,7 +235,7 @@ class TelegramBotRunner:
             db.commit()
             db.refresh(doc)
 
-            tx_type = "SALE" if extracted_data.document_type == DocumentTypeEnum.SALES_Z_REPORT else "EXPENSE"
+            tx_type = "SALE" if extracted_data.document_type in [DocumentTypeEnum.SALES_Z_REPORT, DocumentTypeEnum.SALES_RECEIPT] else "EXPENSE"
             tx = Transaction(
                 organization_id=org.id,
                 document_id=doc.id,
@@ -197,10 +271,12 @@ class TelegramBotRunner:
             status_text = "معتمد ومطابق" if validation.status == "PROCESSED" else "يحتاج مراجعة (فروقات)"
 
             type_labels = {
-                "SALES_Z_REPORT": "كشف إغلاق كاشير (مبيعات)",
-                "EXPENSE_RECEIPT": "إيصال مصروف يومي",
-                "PURCHASE_INVOICE": "فاتورة مشتريات مورد",
-                "BANK_STATEMENT": "كشف بنكي / CliQ"
+                "SALES_Z_REPORT": "كشف إغلاق كاشير (Z-Report)",
+                "SALES_RECEIPT": "فاتورة مبيعات زبون (إيصال كاشير)",
+                "EXPENSE_RECEIPT": "إيصال مصروف يومي ونثريات",
+                "PURCHASE_INVOICE": "فاتورة مشتريات وتوريد مورد",
+                "BANK_STATEMENT": "كشف بنكي / تحويل CliQ",
+                "OTHER": "مستند تجاري عام"
             }
             doc_type_arabic = type_labels.get(extracted_data.document_type.value, extracted_data.document_type.value)
 
@@ -239,40 +315,84 @@ class TelegramBotRunner:
         finally:
             db.close()
 
+    async def _daily_scheduler_loop(self):
+        print("[TelegramBot] Automated Daily Brief Scheduler active...", flush=True)
+        last_sent_date = None
+        while self.is_running:
+            try:
+                await asyncio.sleep(30)
+                now = datetime.now()
+                current_time_str = now.strftime("%H:%M")
+                today_date = now.date()
+
+                if last_sent_date == today_date:
+                    continue
+
+                db = SessionLocal()
+                try:
+                    org = db.query(Organization).first()
+                    if not org or not org.telegram_chat_id or not org.auto_daily_brief_enabled:
+                        continue
+
+                    scheduled_time = org.daily_brief_time or "08:30"
+                    if current_time_str == scheduled_time:
+                        print(f"[Scheduler] Sending automated daily brief for {today_date} to chat {org.telegram_chat_id}...", flush=True)
+                        tx_count = db.query(Transaction).filter(Transaction.organization_id == org.id).count()
+                        if tx_count > 0:
+                            brief = DailySummaryService.generate_morning_brief(db, org.id, today_date)
+                            intro = "☀️ *صباح الخير! إليك ملخصك المالي اليومي المجدول تلقائياً:*\n\n"
+                            await self.send_message(int(org.telegram_chat_id), intro + brief["whatsapp_formatted_text"])
+                            last_sent_date = today_date
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Scheduler] Error in daily scheduler loop: {e}", flush=True)
+
     async def start_polling(self):
         if not self.token:
             print("[TelegramBot] Error: TELEGRAM_BOT_TOKEN is not set.")
             return
 
-        print("[TelegramBot] Connected to Telegram. Single Polling active...")
+        print("[TelegramBot] Connected to Telegram. Single Polling active (Images + Text + Voice Notes)...")
         self.is_running = True
+        scheduler_task = asyncio.create_task(self._daily_scheduler_loop())
 
-        async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
-            while self.is_running:
-                try:
-                    url = f"{self.base_url}/getUpdates?offset={self.offset}&timeout=20"
-                    resp = await client.get(url, headers=self.headers)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        updates = data.get("result", [])
-                        for update in updates:
-                            self.offset = update["update_id"] + 1
-                            msg = update.get("message", {})
-                            chat_id = msg.get("chat", {}).get("id")
-                            if not chat_id:
-                                continue
+        try:
+            async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
+                while self.is_running:
+                    try:
+                        url = f"{self.base_url}/getUpdates?offset={self.offset}&timeout=20"
+                        resp = await client.get(url, headers=self.headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            updates = data.get("result", [])
+                            for update in updates:
+                                self.offset = update["update_id"] + 1
+                                msg = update.get("message", {})
+                                chat_id = msg.get("chat", {}).get("id")
+                                if not chat_id:
+                                    continue
 
-                            if "photo" in msg:
-                                await self.handle_photo(chat_id, msg["photo"], msg.get("caption"))
-                            elif "text" in msg:
-                                await self.handle_text(chat_id, msg["text"])
-                    elif resp.status_code == 401:
-                        print("[TelegramBot] Error: Invalid bot token.")
-                        await asyncio.sleep(10)
-                    else:
+                                # حفظ معرف المحادثة تلقائياً لإرسال التقارير الصباحية المجدولة
+                                self._update_org_chat_id(chat_id)
+
+                                if "voice" in msg:
+                                    await self.handle_voice(chat_id, msg["voice"])
+                                elif "audio" in msg:
+                                    await self.handle_voice(chat_id, msg["audio"])
+                                elif "photo" in msg:
+                                    await self.handle_photo(chat_id, msg["photo"], msg.get("caption"))
+                                elif "text" in msg:
+                                    await self.handle_text(chat_id, msg["text"])
+                        elif resp.status_code == 401:
+                            print("[TelegramBot] Error: Invalid bot token.")
+                            await asyncio.sleep(10)
+                        else:
+                            await asyncio.sleep(2)
+                    except Exception as e:
                         await asyncio.sleep(2)
-                except Exception as e:
-                    await asyncio.sleep(2)
+        finally:
+            scheduler_task.cancel()
 
     def stop(self):
         self.is_running = False
