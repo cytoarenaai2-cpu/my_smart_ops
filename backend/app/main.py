@@ -7,11 +7,10 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.v1 import documents, analytics, webhooks
+from app.api.v1 import documents, analytics, webhooks, tax
 
 # تحديد مسار مجلد واجهة المستخدم frontend
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# frontend lives at ../../frontend relative to backend/app/main.py
 FRONTEND_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", "frontend"))
 
 @asynccontextmanager
@@ -23,7 +22,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="نظام المساعد المالي والتنفيذي الذكي للمنشآت والشركات في الأردن والشرق الأوسط",
+    description="نظام المساعد المالي والتنفيذي والامتثال الضريبي الذكي للمنشآت في الأردن (JoFotara Ready)",
     lifespan=lifespan
 )
 
@@ -40,6 +39,7 @@ app.add_middleware(
 app.include_router(documents.router, prefix=settings.API_V1_STR)
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 app.include_router(webhooks.router, prefix=settings.API_V1_STR)
+app.include_router(tax.router, prefix=settings.API_V1_STR)
 
 # تقديم ملفات الواجهة الأمامية Dashboard
 if os.path.exists(FRONTEND_DIR):
@@ -54,7 +54,6 @@ def get_dashboard():
 
 @app.get("/")
 def root():
-    # توجيه الزائر مباشرة إلى لوحة التحكم المرئية
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
