@@ -3,17 +3,24 @@ let paymentChartInstance = null;
 
 // Initial Load
 document.addEventListener("DOMContentLoaded", () => {
-  fetchDashboardData();
-  fetchTaxData();
+  fetchAllData();
   setupUploadForm();
   setupBriefButton();
   setupTaxModal();
+  setupResetButton();
 
   document.getElementById("refreshBtn").addEventListener("click", () => {
-    fetchDashboardData();
-    fetchTaxData();
+    fetchAllData();
   });
 });
+
+async function fetchAllData() {
+  await Promise.all([
+    fetchDashboardData(),
+    fetchTaxData(),
+    fetchRecentTransactions()
+  ]);
+}
 
 // 1. Fetch dashboard metrics
 async function fetchDashboardData() {
@@ -33,14 +40,12 @@ async function fetchDashboardData() {
 // 2. Fetch Phase 2 Tax & JoFotara Data
 async function fetchTaxData() {
   try {
-    // A. Tax Summary
     const sumRes = await fetch("/api/v1/tax/summary?days=30");
     if (sumRes.ok) {
       const sumData = await sumRes.json();
       renderTaxPanel(sumData.tax_position);
     }
 
-    // B. Risk Invoices
     const riskRes = await fetch("/api/v1/tax/risk-invoices");
     if (riskRes.ok) {
       const riskData = await riskRes.json();
@@ -51,7 +56,63 @@ async function fetchTaxData() {
   }
 }
 
-// 3. Render KPIs
+// 3. Fetch Recent Transactions (The Real Audit Log)
+async function fetchRecentTransactions() {
+  try {
+    const res = await fetch("/api/v1/analytics/recent-transactions?limit=50");
+    if (!res.ok) throw new Error("فشل جلب سجل العمليات");
+    const txs = await res.json();
+
+    const badge = document.getElementById("txCountBadge");
+    badge.textContent = `${txs.length} عمليات مسجلة`;
+
+    const tbody = document.getElementById("transactionsTableBody");
+    if (!txs || txs.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="text-center py-8 text-slate-400">
+            لا توجد أي عمليات مسجلة حتى الآن. سجل أول عملية من هاتفك عبر تيليجرام أو ارفع صورة فاتورة لتظهر هنا فوراً!
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = txs.map(t => {
+      const pb = t.payment_breakdown || {};
+      const paymentsText = [];
+      if (pb.cash) paymentsText.push(`كاش: ${Number(pb.cash).toFixed(2)}`);
+      if (pb.card) paymentsText.push(`بطاقة: ${Number(pb.card).toFixed(2)}`);
+      if (pb.cliq) paymentsText.push(`كليك: ${Number(pb.cliq).toFixed(2)}`);
+      if (pb.delivery_apps) paymentsText.push(`توصيل: ${Number(pb.delivery_apps).toFixed(2)}`);
+      
+      const isSale = t.raw_type === "SALE";
+      const typeBadgeClass = isSale ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-rose-500/20 text-rose-300 border-rose-500/30";
+      const statusBadgeClass = t.status === "معتمد" ? "text-emerald-400 font-semibold" : "text-amber-400 font-semibold";
+
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="p-3 text-slate-400 font-mono">${t.date}</td>
+          <td class="p-3">
+            <span class="border ${typeBadgeClass} px-2 py-0.5 rounded text-[11px] font-semibold">${t.type}</span>
+          </td>
+          <td class="p-3 font-semibold text-slate-200">${t.merchant_or_branch}</td>
+          <td class="p-3 font-mono font-bold text-white text-sm">${Number(t.total_amount).toFixed(3)} د.أ</td>
+          <td class="p-3 text-slate-300 text-[11px]">
+            ${paymentsText.length > 0 ? paymentsText.join(" | ") : "نقد"}
+          </td>
+          <td class="p-3 font-mono text-slate-400">${Number(t.tax_amount).toFixed(3)} د.أ</td>
+          <td class="p-3 ${statusBadgeClass}">${t.status}</td>
+        </tr>
+      `;
+    }).join("");
+
+  } catch (err) {
+    console.error("Transactions log error:", err);
+  }
+}
+
+// 4. Render KPIs
 function renderKPIs(kpis, flags) {
   document.getElementById("kpiSales").innerHTML = `${Number(kpis.total_sales).toFixed(3)} <span class="text-base font-normal text-slate-400">د.أ</span>`;
   document.getElementById("kpiExpenses").innerHTML = `${Number(kpis.total_expenses).toFixed(3)} <span class="text-base font-normal text-slate-400">د.أ</span>`;
@@ -68,13 +129,13 @@ function renderKPIs(kpis, flags) {
   }
 
   const unresolvedCount = flags.length;
-  document.getElementById("kpiFlagsCount").textContent = `${unresolvedCount} تنبيهات تدقيق تحتاج مراجعة`;
+  document.getElementById("kpiFlagsCount").textContent = `${unresolvedCount} تنبيهات تدقيق`;
 
   const score = Math.max(70, 100 - (unresolvedCount * 5));
   document.getElementById("kpiCompliance").textContent = `${score}%`;
 }
 
-// 4. Render Jordan Tax Panel
+// 5. Render Jordan Tax Panel
 function renderTaxPanel(pos) {
   document.getElementById("taxOutput").textContent = `${Number(pos.output_tax_collected).toFixed(3)} د.أ`;
   document.getElementById("taxInput").textContent = `${Number(pos.eligible_input_tax).toFixed(3)} د.أ`;
@@ -94,7 +155,7 @@ function renderTaxPanel(pos) {
   }
 }
 
-// 5. Render Risk Invoices Table
+// 6. Render Risk Invoices Table
 function renderRiskInvoices(invoices) {
   const badge = document.getElementById("riskInvoicesBadge");
   badge.textContent = `${invoices.length} فواتير`;
@@ -131,7 +192,7 @@ function renderRiskInvoices(invoices) {
   `).join("");
 }
 
-// 6. Trend Chart
+// 7. Trend Chart
 function renderTrendChart(dailyData) {
   const ctx = document.getElementById("trendChart").getContext("2d");
   const labels = dailyData.map(d => d.date);
@@ -173,7 +234,7 @@ function renderTrendChart(dailyData) {
   });
 }
 
-// 7. Payment Chart
+// 8. Payment Chart
 function renderPaymentChart(distribution) {
   const ctx = document.getElementById("paymentChart").getContext("2d");
   const cash = distribution.cash || 0;
@@ -182,7 +243,7 @@ function renderPaymentChart(distribution) {
   const delivery = distribution.delivery_apps || 0;
 
   const total = cash + card + cliq + delivery;
-  const dataValues = total > 0 ? [cash, card, cliq, delivery] : [1, 0, 0, 0];
+  const dataValues = total > 0 ? [cash, card, cliq, delivery] : [0, 0, 0, 0];
 
   if (paymentChartInstance) paymentChartInstance.destroy();
 
@@ -191,8 +252,8 @@ function renderPaymentChart(distribution) {
     data: {
       labels: ["كاش (نقدي)", "بطاقات (POS)", "كليك (CliQ)", "تطبيقات التوصيل"],
       datasets: [{
-        data: dataValues,
-        backgroundColor: ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b"],
+        data: total > 0 ? dataValues : [1],
+        backgroundColor: total > 0 ? ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b"] : ["#334155"],
         borderWidth: 0
       }]
     },
@@ -213,7 +274,7 @@ function renderPaymentChart(distribution) {
   `;
 }
 
-// 8. Setup Upload Form
+// 9. Setup Upload Form
 function setupUploadForm() {
   const dropZone = document.getElementById("dropZone");
   const fileInput = document.getElementById("fileInput");
@@ -248,7 +309,7 @@ function setupUploadForm() {
     const notes = textInput.value.trim();
 
     if (!file && !notes) {
-      alert("يرجى اختيار صورة فاتورة أو كتابة كشف سريع.");
+      alert("يرجى اختيار صورة فاتورة أو كتابة تسجيل مبيعات سريع.");
       return;
     }
 
@@ -257,9 +318,9 @@ function setupUploadForm() {
     if (notes) formData.append("text_notes", notes);
 
     submitBtn.disabled = true;
-    submitBtn.innerHTML = `<span>جاري المعالجة والتحقق الضريبي...</span>`;
+    submitBtn.innerHTML = `<span>جاري المعالجة بالذكاء الاصطناعي...</span>`;
     feedback.className = "mt-4 p-4 rounded-xl text-xs bg-slate-900 border border-slate-700 text-slate-300 block";
-    feedback.textContent = "⏳ جاري قراءة وتدقيق أرقام المستند وفحص شروط الفوترة الإلكترونية...";
+    feedback.textContent = "⏳ جاري قراءة وتدقيق أرقام المستند الحقيقية...";
 
     try {
       const res = await fetch("/api/v1/documents/upload", { method: "POST", body: formData });
@@ -269,7 +330,7 @@ function setupUploadForm() {
       feedback.className = "mt-4 p-4 rounded-xl text-xs bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 block";
       feedback.innerHTML = `
         <div class="font-bold text-sm mb-1">✅ ${result.message}</div>
-        <div>نوع العملية: <strong>${result.extracted_summary.type}</strong> | القيمة: <strong>${Number(result.extracted_summary.total_amount).toFixed(3)} د.أ</strong></div>
+        <div>نوع العملية: <strong>${result.extracted_summary.type}</strong> | القيمة المسجلة: <strong>${Number(result.extracted_summary.total_amount).toFixed(3)} د.أ</strong></div>
         <div class="mt-1">حالة الاعتماد: <span class="bg-emerald-500/20 px-2 py-0.5 rounded font-semibold">${result.validation_status}</span></div>
       `;
 
@@ -278,8 +339,7 @@ function setupUploadForm() {
       document.getElementById("selectedFileName").textContent = "يدعم JPG, PNG, PDF حتى 10MB";
       document.getElementById("selectedFileName").classList.remove("text-emerald-400");
 
-      fetchDashboardData();
-      fetchTaxData();
+      fetchAllData();
     } catch (err) {
       feedback.className = "mt-4 p-4 rounded-xl text-xs bg-rose-950/40 border border-rose-500/30 text-rose-300 block";
       feedback.textContent = `❌ خطأ: ${err.message}`;
@@ -291,7 +351,7 @@ function setupUploadForm() {
   });
 }
 
-// 9. Setup WhatsApp Brief
+// 10. Setup WhatsApp Brief Button
 function setupBriefButton() {
   const btn = document.getElementById("copyBriefBtn");
   btn.addEventListener("click", async () => {
@@ -310,7 +370,26 @@ function setupBriefButton() {
   });
 }
 
-// 10. Setup Tax Pre-Filing Report Modal
+// 11. Setup Reset Data Button
+function setupResetButton() {
+  const resetBtn = document.getElementById("resetDataBtn");
+  resetBtn.addEventListener("click", async () => {
+    if (!confirm("هل أنت متأكد من رغبتك في تصفير كافة العمليات والمعاملات؟ سيعود النظام فارغاً 100% لتسجيل عملياتك الجديدة.")) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/v1/analytics/reset-data", { method: "POST" });
+      const data = await res.json();
+      alert(data.message);
+      fetchAllData();
+    } catch (err) {
+      alert("فشل تصفير البيانات: " + err.message);
+    }
+  });
+}
+
+// 12. Setup Tax Pre-Filing Report Modal
 function setupTaxModal() {
   const modal = document.getElementById("taxModal");
   const openBtn = document.getElementById("openTaxReportBtn");
@@ -322,7 +401,7 @@ function setupTaxModal() {
   openBtn.addEventListener("click", async () => {
     modal.classList.remove("hidden");
     modal.classList.add("flex");
-    content.innerHTML = `<p class="text-center py-8 text-slate-400">جاري تجميع بيانات الإقرار ومطابقة الفواتير والتحصيلات...</p>`;
+    content.innerHTML = `<p class="text-center py-8 text-slate-400">جاري تجميع بيانات الإقرار بناءً على العمليات الحقيقية...</p>`;
 
     try {
       const res = await fetch("/api/v1/tax/pre-filing-report?days=30");
@@ -334,7 +413,6 @@ function setupTaxModal() {
       const rec = r.payment_reconciliation;
 
       content.innerHTML = `
-        <!-- Header Info -->
         <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div><span class="text-slate-400">اسم المنشأة:</span> <div class="font-bold text-white">${m.organization_name}</div></div>
           <div><span class="text-slate-400">الرقم الضريبي:</span> <div class="font-bold text-sky-400 font-mono">${m.tax_number}</div></div>
@@ -342,22 +420,20 @@ function setupTaxModal() {
           <div><span class="text-slate-400">درجة الجاهزية:</span> <div class="font-bold ${m.is_audit_ready ? 'text-emerald-400' : 'text-amber-400'}">${m.compliance_score}% (${m.is_audit_ready ? 'جاهز للتقديم' : 'يتطلب مراجعة'})</div></div>
         </div>
 
-        <!-- Tax Position Table -->
         <div class="space-y-2">
           <h4 class="font-bold text-white text-sm">1. ملخص ضريبة المبيعات العامة (16%)</h4>
           <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden">
             <tbody class="divide-y divide-slate-800 text-slate-200">
-              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">إجمالي المبيعات الخاضعة للضريبة (16%):</td><td class="p-2 font-mono font-bold">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td></tr>
-              <tr><td class="p-2 text-slate-300">ضريبة المبيعات المحصلة على المخرجات (Output Tax):</td><td class="p-2 font-mono font-bold text-sky-400">${Number(p.output_tax_collected).toFixed(3)} د.أ</td></tr>
+              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">إجمالي المبيعات الخاضعة للضريبة:</td><td class="p-2 font-mono font-bold">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td></tr>
+              <tr><td class="p-2 text-slate-300">ضريبة المبيعات المحصلة (Output Tax 16%):</td><td class="p-2 font-mono font-bold text-sky-400">${Number(p.output_tax_collected).toFixed(3)} د.أ</td></tr>
               <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">ضريبة المدخلات المقبولة للخصم (Input Tax):</td><td class="p-2 font-mono font-bold text-emerald-400">(${Number(p.eligible_input_tax).toFixed(3)}) د.أ</td></tr>
               <tr class="bg-sky-950/60 font-bold"><td class="p-2.5 text-sky-200 text-sm">صافي الضريبة العامة المستحقة للدائرة (أو رصيد دائن):</td><td class="p-2.5 font-mono text-base text-sky-300">${p.net_sales_tax_payable > 0 ? Number(p.net_sales_tax_payable).toFixed(3) + ' د.أ (للدفع)' : Number(p.tax_credit_carried_forward).toFixed(3) + ' د.أ (رصيد دائن)'}</td></tr>
             </tbody>
           </table>
         </div>
 
-        <!-- Payment Reconciliation Table -->
         <div class="space-y-2">
-          <h4 class="font-bold text-white text-sm">2. مطابقة المبيعات مع وسائل التحصيل (Audit Reconciliation)</h4>
+          <h4 class="font-bold text-white text-sm">2. مطابقة المبيعات مع وسائل التحصيل الفعلية (Reconciliation)</h4>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-800/40 p-3 rounded-xl border border-slate-800">
             <div><span class="text-slate-400">كاش الصندوق:</span> <div class="font-mono font-bold">${Number(rec.cash_collected).toFixed(3)} د.أ</div></div>
             <div><span class="text-slate-400">بطاقات (POS):</span> <div class="font-mono font-bold">${Number(rec.cards_pos_collected).toFixed(3)} د.أ</div></div>
@@ -366,7 +442,6 @@ function setupTaxModal() {
           </div>
         </div>
 
-        <!-- CPA Recommendations -->
         <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 space-y-2">
           <h4 class="font-bold text-amber-300 flex items-center gap-1.5">
             <i data-lucide="check-circle" class="w-4 h-4"></i>

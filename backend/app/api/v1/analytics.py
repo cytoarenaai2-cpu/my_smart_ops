@@ -1,11 +1,11 @@
-from datetime import date, timedelta
+﻿from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.database import get_db
-from app.models.schema import Organization, Transaction, AuditFlag, Branch
+from app.models.schema import Organization, Transaction, AuditFlag, Document, TransactionItem
 from app.services.daily_summary import DailySummaryService
 
 router = APIRouter(prefix="/analytics", tags=["Analytics & Reporting"])
@@ -17,12 +17,12 @@ def get_daily_morning_brief(
     db: Session = Depends(get_db)
 ):
     """
-    ????? ???? ?????? ???????? ??????? ??????? ??? ??????/????????.
+    إرجاع ملخص الصباح التنفيذي الحقيقي للعمليات المسجلة.
     """
     if not organization_id:
         org = db.query(Organization).first()
         if not org:
-            raise HTTPException(status_code=404, detail="?? ??? ?????? ??? ????? ?????.")
+            raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة مسجلة.")
         organization_id = org.id
 
     chosen_date = target_date or date.today()
@@ -32,21 +32,20 @@ def get_daily_morning_brief(
 @router.get("/dashboard-summary")
 def get_dashboard_summary(
     organization_id: Optional[str] = Query(None),
-    days: int = Query(7, ge=1, le=90),
+    days: int = Query(30, ge=1, le=90),
     db: Session = Depends(get_db)
 ):
     """
-    ????? ???? ?????? ????????? ??????? ?????? (????????? ?????????? ??? ?????? ?????????).
+    تغذية لوحة التحكم التنفيذية بمخططات الأداء الحقيقية فقط.
     """
     if not organization_id:
         org = db.query(Organization).first()
         if not org:
-            raise HTTPException(status_code=404, detail="?? ??? ?????? ??? ?????.")
+            raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
         organization_id = org.id
 
     start_date = date.today() - timedelta(days=days)
 
-    # 1. ???????? ???????? ???????
     txs = db.query(Transaction).filter(
         Transaction.organization_id == organization_id,
         Transaction.transaction_date >= start_date
@@ -75,7 +74,7 @@ def get_dashboard_summary(
             total_expenses += tx.total_amount
             daily_trend[d_str]["expenses"] += tx.total_amount
 
-    # 2. ?????????
+    # 2. التنبيهات غير المحلولة
     flags = db.query(AuditFlag).filter(
         AuditFlag.organization_id == organization_id,
         AuditFlag.resolved == False
@@ -87,7 +86,8 @@ def get_dashboard_summary(
             "total_sales": round(total_sales, 3),
             "total_expenses": round(total_expenses, 3),
             "net_cash_flow": round(total_sales - total_expenses, 3),
-            "total_tax_collected": round(total_tax, 3)
+            "total_tax_collected": round(total_tax, 3),
+            "transactions_count": len(txs)
         },
         "daily_trend": [{"date": k, **v} for k, v in sorted(daily_trend.items())],
         "payment_distribution": payment_methods,
@@ -101,3 +101,64 @@ def get_dashboard_summary(
             } for f in flags
         ]
     }
+
+
+@router.get("/recent-transactions")
+def get_recent_transactions(
+    organization_id: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """
+    سجل العمليات الفعلي المباشر - يعرض كل فاتورة وعملية كاشير تم تسجيلها بالتفصيل.
+    """
+    if not organization_id:
+        org = db.query(Organization).first()
+        if not org:
+            return []
+        organization_id = org.id
+
+    txs = db.query(Transaction).filter(
+        Transaction.organization_id == organization_id
+    ).order_by(Transaction.created_at.desc()).limit(limit).all()
+
+    type_labels = {
+        "SALE": "مبيعات (كاشير)",
+        "EXPENSE": "مصروف تشغيلي",
+        "PURCHASE": "مشتريات بضاعة"
+    }
+
+    result = []
+    for t in txs:
+        status = "معتمد"
+        if t.audit_flags and any(not f.resolved for f in t.audit_flags):
+            status = "يحتاج مراجعة"
+
+        result.append({
+            "id": t.id,
+            "date": str(t.transaction_date),
+            "type": type_labels.get(t.transaction_type, t.transaction_type),
+            "raw_type": t.transaction_type,
+            "merchant_or_branch": t.merchant_or_supplier_name or "الفرع الرئيسي",
+            "invoice_number": t.invoice_number or "بدون رقم",
+            "total_amount": round(t.total_amount, 3),
+            "tax_amount": round(t.tax_amount, 3),
+            "payment_breakdown": t.payment_breakdown or {},
+            "status": status,
+            "notes": t.notes or ""
+        })
+
+    return result
+
+
+@router.post("/reset-data")
+def reset_all_data(db: Session = Depends(get_db)):
+    """
+    تصفير كافة العمليات والمعاملات وإرجاع النظام إلى نقطة البداية النظيفة.
+    """
+    db.query(AuditFlag).delete()
+    db.query(TransactionItem).delete()
+    db.query(Transaction).delete()
+    db.query(Document).delete()
+    db.commit()
+    return {"success": True, "message": "تم تصفير كافة العمليات بنجاح. النظام الآن نظيف وجاهز لتسجيل عملياتك الحقيقية."}

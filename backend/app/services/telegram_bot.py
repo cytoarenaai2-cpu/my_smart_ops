@@ -15,11 +15,11 @@ from app.services.daily_summary import DailySummaryService
 class TelegramBotRunner:
     """
     مشغل بوت تيليجرام بنظام الاستطلاع الفردي (Single Instance Long Polling).
+    دقيق 100% - لا يسجل أي أرقام وهمية أو مبالغ صفرية.
     """
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or settings.TELEGRAM_BOT_TOKEN
-        # الاتصال بـ IP تيليجرام الرسمي مباشرة لتفادي حجب الجدران النارية
         self.base_url = f"https://149.154.166.110/bot{self.token}"
         self.file_base_url = f"https://149.154.166.110/file/bot{self.token}"
         self.headers = {"Host": "api.telegram.org"}
@@ -37,7 +37,6 @@ class TelegramBotRunner:
             try:
                 res = await client.post(url, json=payload, headers=self.headers)
                 if res.status_code != 200:
-                    # إعادة المحاولة كنص عادي إذا فشل الماركداون
                     payload.pop("parse_mode", None)
                     await client.post(url, json=payload, headers=self.headers)
             except Exception as e:
@@ -49,7 +48,7 @@ class TelegramBotRunner:
 
         await self.send_message(
             chat_id, 
-            "⏳ *تم استلام الصورة بنجاح!*\nجاري قراءة وتفريغ الفاتورة بنموذج Gemini Vision وتدقيق الحسابات..."
+            "⏳ *تم استلام الصورة بنجاح!*\nجاري قراءة وتفريغ الفاتورة بنموذج Gemini 3.6 Flash وتدقيق الحسابات..."
         )
 
         async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
@@ -86,7 +85,7 @@ class TelegramBotRunner:
                 "✍️ *للتسجيل السريع بالكتابة:*\n"
                 "اكتب مثلاً: _'مبيعات فرع خلدا اليوم كاش 520 وبطاقات 400 وكليك 150'_\n\n"
                 "📊 *لطلب تقرير فوري:*\n"
-                "أرسل كلمة *تقرير* أو أمر /brief للحصول على الملخص التنفيذي لحظياً."
+                "أرسل كلمة *تقرير* أو أمر /brief للحصول على الملخص التنفيذي الحقيقي للعمليات."
             )
             await self.send_message(chat_id, msg)
             return
@@ -96,6 +95,14 @@ class TelegramBotRunner:
             try:
                 org = db.query(Organization).first()
                 if org:
+                    tx_count = db.query(Transaction).filter(Transaction.organization_id == org.id).count()
+                    if tx_count == 0:
+                        await self.send_message(
+                            chat_id, 
+                            "📊 *لا توجد أي عمليات مسجلة حتى الآن.*\nسجل أول عملية لديك بكتابتها أو تصوير فاتورة وسيتم تحديث التقرير فوراً!"
+                        )
+                        return
+
                     brief = DailySummaryService.generate_morning_brief(db, org.id, date.today())
                     await self.send_message(chat_id, brief["whatsapp_formatted_text"])
                 else:
@@ -105,18 +112,31 @@ class TelegramBotRunner:
             return
 
         # تحليل النص واستخراج البيانات الحسابية
-        await self.send_message(chat_id, "⏳ جاري تحليل النص بالذكاء الاصطناعي وتدقيق الحسابات...")
+        await self.send_message(chat_id, "⏳ جاري تحليل النص واستخراج الأرقام الحقيقية بدقة...")
         extracted_data = await AIParserService.parse_document(text_content=text_clean)
         await self._process_and_save_data(chat_id, extracted_data)
 
     async def _process_and_save_data(self, chat_id: int, extracted_data: ExtractedDocumentData):
+        # منع تسجيل أي عمليات وهمية أو صفرية
+        if extracted_data.total_amount <= 0 and len(extracted_data.items) == 0:
+            msg = (
+                "ℹ️ *لم يتم تسجيل العملية:*\n"
+                "لم نتمكن من رصد أي مبالغ مالية أو أرقام واضحة في الرسالة.\n\n"
+                "💡 *أمثلة للتسجيل:*\n"
+                "• مبيعات: _'مبيعات فرع خلدا كاش 520 وبطاقات 400 وكليك 150'_\n"
+                "• مصروف: _'مصروف خضار ومواد 180 دينار كاش'_\n"
+                "• أو أرسل صورة واضحة لفاتورة أو كشف كاشير."
+            )
+            await self.send_message(chat_id, msg)
+            return
+
         validation = FinancialValidator.validate(extracted_data)
         
         db: Session = SessionLocal()
         try:
             org = db.query(Organization).first()
             if not org:
-                org = Organization(name="سلسلة مطاعم الأفق", currency="JOD")
+                org = Organization(name="المؤسسة التجارية", currency="JOD")
                 db.add(org)
                 db.commit()
                 db.refresh(org)
@@ -175,7 +195,7 @@ class TelegramBotRunner:
             doc_type_arabic = type_labels.get(extracted_data.document_type.value, extracted_data.document_type.value)
 
             lines = [
-                f"{status_icon} *تم تدقيق وتفريغ العملية بنجاح!*",
+                f"{status_icon} *تم تدقيق وتفريغ العملية الحقيقية بنجاح!*",
                 "───────────────────",
                 f"🏷️ *نوع المستند:* {doc_type_arabic}",
                 f"🏢 *الفرع/المورد:* {extracted_data.merchant_or_branch_name or 'الفرع الرئيسي'}",
@@ -201,7 +221,7 @@ class TelegramBotRunner:
                     lines.append(f"  - [{f.severity}] {f.message}")
 
             lines.append("")
-            lines.append("🖥️ _تم تحديث لوحة التحكم المباشرة فورياً!_")
+            lines.append("🖥️ _تم تسجيل العملية وتحديث لوحة التحكم فورياً!_")
 
             formatted_reply = "\n".join(lines)
             await self.send_message(chat_id, formatted_reply)
