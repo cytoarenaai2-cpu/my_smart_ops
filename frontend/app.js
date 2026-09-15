@@ -242,6 +242,7 @@ window.openReviewModal = function(txId) {
   document.getElementById("editTxMerchant").value = t.merchant_or_branch || "";
   document.getElementById("editTxTotal").value = Number(t.total_amount || 0).toFixed(3);
   document.getElementById("editTxSubtotal").value = Number(t.subtotal || t.total_amount || 0).toFixed(3);
+  document.getElementById("editTxService").value = t.service_charge ? Number(t.service_charge).toFixed(3) : "0.000";
   document.getElementById("editTxTax").value = Number(t.tax_amount || 0).toFixed(3);
   document.getElementById("editTxTaxId").value = t.supplier_tax_id || "";
 
@@ -308,6 +309,7 @@ function setupReviewModal() {
         merchant_or_supplier_name: document.getElementById("editTxMerchant").value.trim(),
         total_amount: parseFloat(document.getElementById("editTxTotal").value) || 0,
         subtotal: parseFloat(document.getElementById("editTxSubtotal").value) || 0,
+        service_charge: parseFloat(document.getElementById("editTxService").value) || 0,
         tax_amount: parseFloat(document.getElementById("editTxTax").value) || 0,
         supplier_tax_id: document.getElementById("editTxTaxId").value.trim(),
         payment_breakdown: {

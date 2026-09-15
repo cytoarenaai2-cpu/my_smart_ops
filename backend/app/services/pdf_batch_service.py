@@ -1,4 +1,4 @@
-﻿import io
+import io
 import uuid
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Callable, Awaitable
@@ -164,6 +164,7 @@ class PDFBatchService:
                     invoice_number=inv_number,
                     merchant_or_supplier_name=merchant_name,
                     subtotal=round(inv_data.subtotal, 3),
+                    service_charge=round(inv_data.service_charge, 3),
                     tax_amount=round(inv_data.tax_amount, 3),
                     discount_amount=round(inv_data.discount_amount, 3),
                     total_amount=round(inv_data.total_amount, 3),

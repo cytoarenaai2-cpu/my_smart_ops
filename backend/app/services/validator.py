@@ -1,4 +1,5 @@
-﻿from typing import List, Dict, Any, Optional
+import re
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.models.extraction_schemas import ExtractedDocumentData, DocumentTypeEnum
 
@@ -20,7 +21,7 @@ class FinancialValidator:
     وتجهيز البيانات للفحص الضريبي الأردني.
     """
     
-    TOLERANCE = 0.010  # السماحية الحسابية (10 فلسات للتعامل مع التدوير)
+    TOLERANCE = 0.015  # السماحية الحسابية (15 فلساً للتعامل مع التدوير وتقريب الفلس)
 
     @classmethod
     def validate(cls, data: ExtractedDocumentData) -> ValidationResult:
@@ -28,29 +29,51 @@ class FinancialValidator:
         status = "PROCESSED"
         is_tax_deductible = True
 
-        # 1. فحص سلامة البنود مقارنة بالمجموع الجزئي (Items sum check)
+        # 1. فحص سلامة البنود مقارنة بالمجموع الجزئي أو الإجمالي (Items sum check)
+        # في قطاع المطاعم والتجزئة، قد تكون أسعار قائمة الطعام:
+        # أ) قبل الضريبة والخدمة (تطابق subtotal)
+        # ب) شاملة الضريبة والخدمة Gross (تطابق total_amount)
+        # ج) شاملة بدل الخدمة (تطابق subtotal + service_charge)
         if data.items:
-            items_sum = sum(item.total_price for item in data.items)
-            diff = abs(items_sum - data.subtotal)
-            if data.subtotal > 0 and diff > cls.TOLERANCE:
+            items_sum = round(sum(item.total_price for item in data.items), 3)
+            diff_subtotal = abs(items_sum - data.subtotal)
+            diff_total = abs(items_sum - data.total_amount)
+            diff_with_service = abs(items_sum - (data.subtotal + data.service_charge))
+
+            min_diff = min(diff_subtotal, diff_total, diff_with_service)
+            if data.subtotal > 0 and min_diff > cls.TOLERANCE:
                 flags.append(AuditFlagResult(
                     severity="WARNING",
                     flag_type="ARITHMETIC_MISMATCH",
-                    message=f"مجموع بنود الفاتورة ({items_sum:.3f}) لا يطابق الإجمالي قبل الضريبة ({data.subtotal:.3f}) بفارق {diff:.3f} د.أ"
+                    message=f"مجموع بنود الفاتورة ({items_sum:.3f}) لا يطابق الإجمالي قبل الضريبة ({data.subtotal:.3f}) أو الإجمالي النهائي ({data.total_amount:.3f}) بفارق {min_diff:.3f} د.أ"
                 ))
                 status = "NEEDS_REVIEW"
 
-        # 2. فحص المعادلة الكلية: الإجمالي = المجموع قبل الضريبة + الضريبة - الخصم
-        expected_total = data.subtotal + data.tax_amount - data.discount_amount
-        if data.subtotal > 0:
-            total_diff = abs(expected_total - data.total_amount)
-            if total_diff > cls.TOLERANCE:
-                flags.append(AuditFlagResult(
-                    severity="CRITICAL",
-                    flag_type="ARITHMETIC_MISMATCH",
-                    message=f"الإجمالي النهائي المسجل ({data.total_amount:.3f}) لا يطابق (المجموع + الضريبة - الخصم = {expected_total:.3f}) بفارق {total_diff:.3f} د.أ"
-                ))
-                status = "NEEDS_REVIEW"
+        # 2. فحص المعادلة الكلية:
+        # الإجمالي = المجموع قبل الضريبة والخدمة + بدل الخدمة + الضريبة - الخصم
+        # التحقق التلقائي الذكي من بدل الخدمة إذا كان مدوناً في الملاحظات أو الفارق
+        expected_total = round(data.subtotal + data.service_charge + data.tax_amount - data.discount_amount, 3)
+        total_diff = abs(expected_total - data.total_amount)
+
+        if total_diff > cls.TOLERANCE and data.service_charge == 0:
+            diff_gap = round(data.total_amount - (data.subtotal + data.tax_amount - data.discount_amount), 3)
+            # فحص إذا كان الفارق مطابقاً لقيمة خدمة مدونة في الملاحظات
+            notes_str = str(data.notes or "")
+            s_match = re.search(r'(?:service|خدمة|بدل خدمة)\s*[:=]?\s*(\d+(?:\.\d+)?)', notes_str, re.IGNORECASE)
+            if s_match:
+                notes_service = float(s_match.group(1))
+                if abs(notes_service - diff_gap) <= cls.TOLERANCE:
+                    data.service_charge = notes_service
+                    expected_total = round(data.subtotal + data.service_charge + data.tax_amount - data.discount_amount, 3)
+                    total_diff = abs(expected_total - data.total_amount)
+
+        if data.subtotal > 0 and total_diff > cls.TOLERANCE:
+            flags.append(AuditFlagResult(
+                severity="CRITICAL",
+                flag_type="ARITHMETIC_MISMATCH",
+                message=f"الإجمالي النهائي المسجل ({data.total_amount:.3f}) لا يطابق (المجموع: {data.subtotal:.3f} + الخدمة: {data.service_charge:.3f} + الضريبة: {data.tax_amount:.3f} - الخصم: {data.discount_amount:.3f} = {expected_total:.3f}) بفارق {total_diff:.3f} د.أ"
+            ))
+            status = "NEEDS_REVIEW"
 
         # 3. مطابقة وسائل الدفع (Payment Reconciliation) لكشوفات الكاشير Z-Report
         total_payments = data.payment_breakdown.total_payments

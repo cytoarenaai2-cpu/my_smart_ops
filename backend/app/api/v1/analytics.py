@@ -16,6 +16,7 @@ class TransactionUpdatePayload(BaseModel):
     merchant_or_supplier_name: Optional[str] = None
     total_amount: Optional[float] = None
     subtotal: Optional[float] = None
+    service_charge: Optional[float] = None
     tax_amount: Optional[float] = None
     supplier_tax_id: Optional[str] = None
     payment_breakdown: Optional[Dict[str, float]] = None
@@ -197,6 +198,7 @@ def get_recent_transactions(
             "merchant_or_branch": t.merchant_or_supplier_name or "الفرع الرئيسي",
             "invoice_number": t.invoice_number or "بدون رقم",
             "subtotal": round(t.subtotal or 0.0, 3),
+            "service_charge": round(t.service_charge or 0.0, 3),
             "tax_amount": round(t.tax_amount, 3),
             "total_amount": round(t.total_amount, 3),
             "supplier_tax_id": t.supplier_tax_id or "",
@@ -272,6 +274,7 @@ def export_transactions_csv(
         "الفرع / المتجر / المورد",
         "رقم الفاتورة",
         "المبلغ قبل الضريبة (د.أ)",
+        "بدل الخدمة (د.أ)",
         "قيمة الضريبة 16% (د.أ)",
         "المبلغ الإجمالي الفعلي (د.أ)",
         "الرقم الضريبي للمورد (JoFotara)",
@@ -303,6 +306,7 @@ def export_transactions_csv(
             t.merchant_or_supplier_name or "الفرع الرئيسي",
             t.invoice_number or "",
             f"{t.subtotal or 0.0:.3f}",
+            f"{t.service_charge or 0.0:.3f}",
             f"{t.tax_amount or 0.0:.3f}",
             f"{t.total_amount or 0.0:.3f}",
             t.supplier_tax_id or "",
@@ -346,6 +350,8 @@ def update_and_approve_transaction(
         tx.total_amount = round(float(payload.total_amount), 3)
     if payload.subtotal is not None:
         tx.subtotal = round(float(payload.subtotal), 3)
+    if payload.service_charge is not None:
+        tx.service_charge = round(float(payload.service_charge), 3)
     if payload.tax_amount is not None:
         tx.tax_amount = round(float(payload.tax_amount), 3)
     if payload.supplier_tax_id is not None:

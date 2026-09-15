@@ -72,7 +72,8 @@ class ExtractedDocumentData(BaseModel):
     
     # Financials
     items: List[ExtractedItem] = Field(default_factory=list, description="تفاصيل البنود")
-    subtotal: float = Field(0.0, description="المجموع قبل الضريبة")
+    subtotal: float = Field(0.0, description="المجموع قبل الضريبة والخدمة")
+    service_charge: float = Field(0.0, description="بدل أو رسوم الخدمة في المطاعم (Service Charge)")
     tax_amount: float = Field(0.0, description="إجمالي قيمة الضريبة")
     discount_amount: float = Field(0.0, description="قيمة الخصم إن وجد")
     total_amount: float = Field(0.0, description="المجموع الإجمالي النهائي")
@@ -111,8 +112,21 @@ class ExtractedDocumentData(BaseModel):
         elif raw_type not in [e.value for e in DocumentTypeEnum]:
             data["document_type"] = DocumentTypeEnum.OTHER
 
-        # 2. تنظيف الأرقام المالية
-        for f in ["subtotal", "tax_amount", "discount_amount", "total_amount", "confidence_score"]:
+        # 2. استخراج بدل الخدمة (Service Charge) بمرونة
+        if "service_charge" not in data or not data["service_charge"]:
+            for s_key in ["service", "service_fee", "service_amount", "services", "خدمة", "بدل خدمة"]:
+                if s_key in data and data[s_key]:
+                    data["service_charge"] = data[s_key]
+                    break
+
+        # فحص وجود الخدمة مدونة في الملاحظات في حال لم تُفرز كحقل
+        if not data.get("service_charge") and data.get("notes"):
+            s_match = re.search(r'(?:service|خدمة|بدل خدمة)\s*[:=]?\s*(\d+(?:\.\d+)?)', str(data.get("notes")), re.IGNORECASE)
+            if s_match:
+                data["service_charge"] = float(s_match.group(1))
+
+        # 3. تنظيف الأرقام المالية
+        for f in ["subtotal", "service_charge", "tax_amount", "discount_amount", "total_amount", "confidence_score"]:
             if f in data:
                 data[f] = _clean_number(data[f], 0.0)
 

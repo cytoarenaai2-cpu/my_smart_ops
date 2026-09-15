@@ -87,6 +87,7 @@ class Transaction(Base):
 
     # Financial breakdown (3 decimals for JOD Fils precision)
     subtotal = Column(Float, default=0.0)
+    service_charge = Column(Float, default=0.0)  # بدل الخدمة في المطاعم (Service Charge)
     tax_amount = Column(Float, default=0.0)
     discount_amount = Column(Float, default=0.0)
     total_amount = Column(Float, nullable=False)

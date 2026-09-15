@@ -26,6 +26,13 @@ def init_db():
             except Exception:
                 pass
 
+        try:
+            from sqlalchemy import text
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN service_charge FLOAT DEFAULT 0.0"))
+            conn.commit()
+        except Exception:
+            pass
+
 def get_db():
     db = SessionLocal()
     try:

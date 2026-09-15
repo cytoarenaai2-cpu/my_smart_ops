@@ -147,6 +147,7 @@ async def upload_and_process_document(
         invoice_number=extracted_data.invoice_number,
         merchant_or_supplier_name=extracted_data.merchant_or_branch_name,
         subtotal=extracted_data.subtotal,
+        service_charge=round(extracted_data.service_charge, 3),
         tax_amount=extracted_data.tax_amount,
         discount_amount=extracted_data.discount_amount,
         total_amount=extracted_data.total_amount,

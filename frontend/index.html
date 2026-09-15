@@ -689,21 +689,26 @@
           </div>
         </div>
 
-        <!-- Row 2: Total Amount & Subtotal & Tax -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <!-- Row 2: Total Amount & Subtotal & Service & Tax -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
           <div>
-            <label class="block text-slate-300 font-semibold mb-1">المبلغ الإجمالي الفعلي (د.أ):</label>
-            <input type="number" step="0.001" id="editTxTotal" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 font-mono font-bold text-emerald-400 focus:border-emerald-500 focus:outline-none" required />
+            <label class="block text-slate-300 font-semibold mb-1 text-[11px]">المبلغ الإجمالي (د.أ):</label>
+            <input type="number" step="0.001" id="editTxTotal" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 font-mono font-bold text-emerald-400 focus:border-emerald-500 focus:outline-none text-xs" required />
           </div>
 
           <div>
-            <label class="block text-slate-300 font-semibold mb-1">المبلغ قبل الضريبة (د.أ):</label>
-            <input type="number" step="0.001" id="editTxSubtotal" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 font-mono text-slate-200 focus:border-emerald-500 focus:outline-none" />
+            <label class="block text-slate-300 font-semibold mb-1 text-[11px]">المبلغ قبل الضريبة:</label>
+            <input type="number" step="0.001" id="editTxSubtotal" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 font-mono text-slate-200 focus:border-emerald-500 focus:outline-none text-xs" />
           </div>
 
           <div>
-            <label class="block text-slate-300 font-semibold mb-1">قيمة الضريبة 16% (د.أ):</label>
-            <input type="number" step="0.001" id="editTxTax" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 font-mono text-sky-400 focus:border-emerald-500 focus:outline-none" />
+            <label class="block text-amber-300 font-semibold mb-1 text-[11px]">بدل الخدمة (Service):</label>
+            <input type="number" step="0.001" id="editTxService" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 font-mono font-bold text-amber-400 focus:border-amber-500 focus:outline-none text-xs" placeholder="0.000" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1 text-[11px]">قيمة الضريبة (د.أ):</label>
+            <input type="number" step="0.001" id="editTxTax" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 font-mono text-sky-400 focus:border-emerald-500 focus:outline-none text-xs" />
           </div>
         </div>
 
