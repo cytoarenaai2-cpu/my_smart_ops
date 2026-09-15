@@ -1,6 +1,8 @@
 import asyncio
-from datetime import date, datetime
-from typing import Optional, Dict, Any
+import re
+import calendar
+from datetime import date, datetime, timedelta
+from typing import Optional, Dict, Any, List
 import httpx
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,21 @@ class TelegramBotRunner:
     دقيق 100% - يدعم الصور والنصوص والفويس نوت والجدولة الصباحية الآلية.
     """
 
+    MONTH_MAP = {
+        'يناير': 1, 'كانون الثاني': 1, 'كانون اول': 12, 'كانون الاول': 12,
+        'فبراير': 2, 'شباط': 2,
+        'مارس': 3, 'آذار': 3, 'اذار': 3,
+        'ابريل': 4, 'أبريل': 4, 'نيسان': 4,
+        'مايو': 5, 'أيار': 5, 'ايار': 5,
+        'يونيو': 6, 'حزيران': 6,
+        'يوليو': 7, 'تموز': 7,
+        'اغسطس': 8, 'أغسطس': 8, 'آب': 8, 'اب': 8,
+        'سبتمبر': 9, 'أيلول': 9, 'ايلول': 9,
+        'اكتوبر': 10, 'أكتوبر': 10, 'تشرين الأول': 10, 'تشرين اول': 10,
+        'نوفمبر': 11, 'تشرين الثاني': 11, 'تشرين ثاني': 11,
+        'ديسمبر': 12
+    }
+
     def __init__(self, token: Optional[str] = None):
         self.token = token or settings.TELEGRAM_BOT_TOKEN
         self.base_url = f"https://149.154.166.110/bot{self.token}"
@@ -27,13 +44,73 @@ class TelegramBotRunner:
         self.offset = 0
         self.is_running = False
 
-    async def send_message(self, chat_id: int, text: str, parse_mode: str = "Markdown"):
+    def get_main_keyboard(self) -> dict:
+        """لوحة الأزرار السريعة الثابتة أسفل شاشة تيليجرام للتسهيل على العملاء"""
+        return {
+            "keyboard": [
+                [{"text": "📊 تقرير اليوم"}, {"text": "📅 تقرير الشهر"}],
+                [{"text": "🏛️ الإقرار الضريبي"}, {"text": "⚠️ تنبيهات التدقيق"}],
+                [{"text": "📈 كافة العمليات"}, {"text": "❓ مساعدة وأوامر"}]
+            ],
+            "resize_keyboard": True,
+            "is_persistent": True
+        }
+
+    def get_report_inline_keyboard(self) -> dict:
+        """أزرار تفاعلية مضمنة في الرسالة لاختيار فترات التقارير بنقرة واحدة"""
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "📊 تقرير اليوم", "callback_data": "rep_today"},
+                    {"text": "⏮️ تقرير الأمس", "callback_data": "rep_yesterday"}
+                ],
+                [
+                    {"text": "📅 الشهر الحالي", "callback_data": "rep_this_month"},
+                    {"text": "📆 شهر 4 (2022)", "callback_data": "rep_month_2022_04"}
+                ],
+                [
+                    {"text": "🗓️ سنة 2022 كاملة", "callback_data": "rep_year_2022"},
+                    {"text": "📈 كافة العمليات", "callback_data": "rep_all"}
+                ],
+                [
+                    {"text": "🏛️ ملخص JoFotara الضريبي", "callback_data": "tax_all"},
+                    {"text": "⚠️ فحص التدقيق", "callback_data": "audit_check"}
+                ]
+            ]
+        }
+
+    async def set_bot_commands(self):
+        """تسجيل قائمة الأوامر الرسمية في تيليجرام لتظهر كزر Menu أزرق بجانب خانة الكتابة"""
+        url = f"{self.base_url}/setMyCommands"
+        commands = [
+            {"command": "start", "description": "🚀 بدء التشغيل ولوحة الأزرار"},
+            {"command": "today", "description": "📊 تقرير مبيعات اليوم"},
+            {"command": "yesterday", "description": "⏮️ تقرير مبيعات الأمس"},
+            {"command": "month", "description": "📅 تقرير مبيعات الشهر الحالي"},
+            {"command": "tax", "description": "🏛️ الإقرار الضريبي JoFotara"},
+            {"command": "all", "description": "📈 كشف كافة العمليات المسجلة"},
+            {"command": "audit", "description": "⚠️ تنبيهات التدقيق والمطابقة"},
+            {"command": "report", "description": "📑 اختيار أو طلب تقرير مخصص"},
+            {"command": "help", "description": "❓ شرح الأوامر وطرق التخصيص"}
+        ]
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            try:
+                res = await client.post(url, json={"commands": commands}, headers=self.headers)
+                if res.status_code == 200:
+                    print("[TelegramBot] Registered bot commands menu (setMyCommands).", flush=True)
+            except Exception as e:
+                print(f"[TelegramBot] set_bot_commands error: {e}", flush=True)
+
+    async def send_message(self, chat_id: int, text: str, parse_mode: str = "Markdown", reply_markup: Optional[dict] = None):
         url = f"{self.base_url}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": parse_mode
         }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
         async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
             try:
                 res = await client.post(url, json=payload, headers=self.headers)
@@ -222,49 +299,273 @@ class TelegramBotRunner:
         finally:
             db.close()
 
+    def _parse_report_request(self, text: str) -> Optional[Dict[str, Any]]:
+        """التعرف الذكي على طلبات التقارير المخصصة وتحديد الفترات والتواريخ باللغة العربية والإنجليزية"""
+        t = text.strip()
+        is_tax = bool(re.search(r'(ضريب|tax|jofotara|جوفاتورة|إقرار|اقرار)', t, re.IGNORECASE))
+
+        # طلب تقرير عام بدون تحديد فترة
+        if t in ["/report", "/تقرير", "تقرير", "ملخص", "تقرير مالي", "التقرير"]:
+            return {"kind": "interactive", "is_tax": False}
+
+        if t in ["/tax", "/الضريبة", "الضريبة", "تقرير الضريبة", "الإقرار الضريبي", "الاقرار الضريبي", "🏛️ الإقرار الضريبي"]:
+            return {"kind": "all", "start": None, "end": None, "is_tax": True, "label": "كافة العمليات المسجلة"}
+
+        # 1. نمط YYYY-MM أو MM-YYYY (مثل: 2022-04 أو 04-2022 أو 2022/4)
+        m_ym = re.search(r'\b(20\d\d)[-/](0?[1-9]|1[0-2])\b', t)
+        if not m_ym:
+            m_ym = re.search(r'\b(0?[1-9]|1[0-2])[-/](20\d\d)\b', t)
+            if m_ym:
+                month, year = int(m_ym.group(1)), int(m_ym.group(2))
+                last_day = calendar.monthrange(year, month)[1]
+                return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'label': f'شهر {month} لسنة {year}'}
+        else:
+            year, month = int(m_ym.group(1)), int(m_ym.group(2))
+            last_day = calendar.monthrange(year, month)[1]
+            return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'label': f'شهر {month} لسنة {year}'}
+
+        # 2. فحص أسماء الشهور مع أو بدون سنة (مثل: شهر نيسان 2022 أو نيسان)
+        m_year = re.search(r'\b(20\d\d)\b', t)
+        for m_name, m_num in self.MONTH_MAP.items():
+            if m_name in t:
+                year = int(m_year.group(1)) if m_year else date.today().year
+                last_day = calendar.monthrange(year, m_num)[1]
+                return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'label': f'شهر {m_name} ({year})'}
+
+        # 3. فحص رقم الشهر (مثل: شهر 4 أو شهر 04)
+        m_month_num = re.search(r'شهر\s*(0?[1-9]|1[0-2])\b', t)
+        if m_month_num:
+            m_num = int(m_month_num.group(1))
+            year = int(m_year.group(1)) if m_year else date.today().year
+            last_day = calendar.monthrange(year, m_num)[1]
+            return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'label': f'شهر {m_num} لسنة {year}'}
+
+        # 4. فحص السنة فقط (مثل: سنة 2022، عام 2022، تقرير 2022، /report 2022)
+        if (m_year and any(w in t for w in ['سنة', 'عام', 'year', 'تقرير', '/report', '/tax'])) or (m_year and len(t) <= 10):
+            year = int(m_year.group(1))
+            return {'kind': 'year', 'year': year, 'start': date(year, 1, 1), 'end': date(year, 12, 31), 'is_tax': is_tax, 'label': f'سنة {year}'}
+
+        # 5. اليوم / الأمس / الشهر الحالي / كافة العمليات
+        if any(w in t for w in ['/today', 'اليوم', 'تقرير اليوم', 'مبيعات اليوم', '📊 تقرير اليوم']):
+            return {'kind': 'today', 'start': date.today(), 'end': date.today(), 'is_tax': is_tax, 'label': f'اليوم ({date.today()})'}
+
+        if any(w in t for w in ['/yesterday', 'أمس', 'امس', 'تقرير الأمس', 'مبيعات امس', '⏮️ تقرير الأمس']):
+            y_date = date.today() - timedelta(days=1)
+            return {'kind': 'day', 'start': y_date, 'end': y_date, 'is_tax': is_tax, 'label': f'يوم أمس ({y_date})'}
+
+        if any(w in t for w in ['/month', 'الشهر الحالي', 'هذا الشهر', 'تقرير الشهر', '📅 تقرير الشهر']):
+            td = date.today()
+            last_day = calendar.monthrange(td.year, td.month)[1]
+            return {'kind': 'month', 'year': td.year, 'month': td.month, 'start': date(td.year, td.month, 1), 'end': date(td.year, td.month, last_day), 'is_tax': is_tax, 'label': f'الشهر الحالي ({td.year}-{td.month:02d})'}
+
+        if any(w in t for w in ['/all', 'كافة العمليات', 'جميع العمليات', 'كل الفواتير', 'كافة الفترات', '📈 كافة العمليات']):
+            return {'kind': 'all', 'start': None, 'end': None, 'is_tax': is_tax, 'label': 'كافة العمليات المسجلة'}
+
+        return None
+
+    async def _execute_custom_report(self, chat_id: int, req: dict):
+        """تنفيذ وتوليد التقرير المخصص وإرساله إلى محادثة تيليجرام"""
+        if req.get("kind") == "interactive":
+            msg = (
+                "📑 *اختر فترة التقرير المطلوبة بنقرة واحدة من الأزرار التفاعلية:*\n\n"
+                "💡 أو يمكنك كتابة طلبك مباشرة بأي صيغة عربية وسيفهمها النظام تلقائياً:\n"
+                "• _'تقرير شهر 4 2022'_\n"
+                "• _'تقرير سنة 2022'_\n"
+                "• _'تقرير الضريبة لسنة 2022'_\n"
+                "• _/report 2022-04_"
+            )
+            await self.send_message(
+                chat_id, 
+                msg, 
+                reply_markup=self.get_report_inline_keyboard()
+            )
+            return
+
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if not org:
+                await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة بعد.")
+                return
+
+            is_tax = req.get("is_tax", False)
+            start_d = req.get("start")
+            end_d = req.get("end")
+            label = req.get("label", "الفترة المحددة")
+            all_time = (req.get("kind") == "all")
+
+            if is_tax:
+                tax_text = DailySummaryService.generate_tax_telegram_brief(
+                    db=db,
+                    organization_id=org.id,
+                    start_date=start_d,
+                    end_date=end_d,
+                    period_name=label,
+                    all_time=all_time
+                )
+                await self.send_message(chat_id, tax_text, reply_markup=self.get_main_keyboard())
+            else:
+                rep = DailySummaryService.generate_period_report(
+                    db=db,
+                    organization_id=org.id,
+                    start_date=start_d,
+                    end_date=end_d,
+                    period_label=label,
+                    all_time=all_time
+                )
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+        finally:
+            db.close()
+
+    async def handle_callback_query(self, cb_query: dict):
+        """التعامل مع نقرات الأزرار التفاعلية الشفافة (Inline Buttons)"""
+        cb_id = cb_query.get("id")
+        data = cb_query.get("data")
+        msg = cb_query.get("message", {})
+        chat_id = msg.get("chat", {}).get("id")
+
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+            try:
+                await client.post(
+                    f"{self.base_url}/answerCallbackQuery",
+                    json={"callback_query_id": cb_id},
+                    headers=self.headers
+                )
+            except Exception:
+                pass
+
+        if not chat_id or not data:
+            return
+
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if not org:
+                await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
+                return
+
+            if data == "rep_today":
+                brief = DailySummaryService.generate_morning_brief(db, org.id, date.today())
+                await self.send_message(chat_id, brief["whatsapp_formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "rep_yesterday":
+                y_date = date.today() - timedelta(days=1)
+                rep = DailySummaryService.generate_period_report(db, org.id, start_date=y_date, end_date=y_date, period_label=f"يوم أمس ({y_date})")
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "rep_this_month":
+                td = date.today()
+                last_day = calendar.monthrange(td.year, td.month)[1]
+                rep = DailySummaryService.generate_period_report(db, org.id, start_date=date(td.year, td.month, 1), end_date=date(td.year, td.month, last_day), period_label=f"الشهر الحالي ({td.year}-{td.month:02d})")
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "rep_month_2022_04":
+                rep = DailySummaryService.generate_period_report(db, org.id, start_date=date(2022, 4, 1), end_date=date(2022, 4, 30), period_label="شهر 4 (أبريل) 2022")
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "rep_year_2022":
+                rep = DailySummaryService.generate_period_report(db, org.id, start_date=date(2022, 1, 1), end_date=date(2022, 12, 31), period_label="سنة 2022 كاملة")
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "rep_all":
+                rep = DailySummaryService.generate_period_report(db, org.id, period_label="كافة العمليات المسجلة", all_time=True)
+                await self.send_message(chat_id, rep["formatted_text"], reply_markup=self.get_main_keyboard())
+            elif data == "tax_all":
+                tax_text = DailySummaryService.generate_tax_telegram_brief(db, org.id, all_time=True)
+                await self.send_message(chat_id, tax_text, reply_markup=self.get_main_keyboard())
+            elif data == "audit_check":
+                flags = db.query(AuditFlag).filter(AuditFlag.organization_id == org.id, AuditFlag.resolved == False).all()
+                if not flags:
+                    await self.send_message(chat_id, "✅ *سجل التدقيق نظيف تماماً!*\nلا توجد أي ملاحظات أو تنبيهات غير محلولة.", reply_markup=self.get_main_keyboard())
+                else:
+                    lines = [f"⚠️ *تنبيهات وملاحظات التدقيق المعلقة ({len(flags)}):*", "───────────────────"]
+                    for f in flags[:8]:
+                        lines.append(f"• [{f.severity}] {f.message}")
+                    lines.append("\n🖥️ _يمكنك حل واعتماد هذه التنبيهات من لوحة التحكم بنقرة واحدة._")
+                    await self.send_message(chat_id, "\n".join(lines), reply_markup=self.get_main_keyboard())
+        finally:
+            db.close()
+
     async def handle_text(self, chat_id: int, text: str):
         text_clean = text.strip()
 
-        if text_clean in ["/start", "ابدأ"]:
+        # 1. أوامر البدء والترحيب
+        if text_clean in ["/start", "ابدأ", "start"]:
             msg = (
-                "👋 *أهلاً بك في المساعد المالي والتنفيذي والضريبي الذكي!*\n\n"
-                "هذا البوت مرتبط مباشرة بلوحة التحكم والمحرك الضريبي الأردني (JoFotara):\n\n"
-                "📄 *لمعالجة ملفات PDF مجمعة:*\n"
-                "أرسل ملف PDF يحتوي على صفحات وفواتير متعددة وسيقوم النظام بتفكيكها واستخراج كل فاتورة على حدى وإعطائك تقريراً إحصائياً شاملاً!\n\n"
-                "📸 *لتسجيل فواتير ومبيعات بالصور:*\n"
-                "صوّر بكاميرا هاتفك إغلاق الكاشير (Z-Report) أو أي فاتورة شراء أو إيصال مصروف وأرسلها هنا فوراً.\n\n"
-                "🎙️ *لتسجيل فويس نوت صوتي:*\n"
-                "سجل رسالة صوتية سريعة بصوتك (مثلاً: _'مبيعات فرع خلدا اليوم 520 كاش و400 فيزا ودفعنا للموزع 80'_) وسيقوم الذكاء الاصطناعي بتفريغها وتدقيقها فورياً!\n\n"
-                "✍️ *للتسجيل السريع بالكتابة:*\n"
-                "اكتب نصاً مثل: _'مبيعات فرع خلدا اليوم كاش 520 وبطاقات 400 وكليك 150'_\n\n"
-                "📊 *لطلب تقرير فوري:*\n"
-                "أرسل كلمة *تقرير* أو أمر /brief للحصول على الملخص التنفيذي الحقيقي للعمليات."
+                "👋 *أهلاً بك في نظام الإدارة المالية والتدقيق الذكي!*\n\n"
+                "هذا البوت يمنحك تحكماً مالياً وضريبياً كاملاً لعمليات منشأتك عبر تيليجرام:\n\n"
+                "📊 *لوحة الأزرار السريعة:*\n"
+                "تجد أسفل الشاشة 6 أزرار جاهزة تمكنك من طلب أي تقرير بضغطة زر دون كتابة.\n\n"
+                "🎯 *تخصيص التقارير الذكي باللغة الطبيعية:*\n"
+                "اكتب أي فترة تريدها وسيفهمها النظام فوراً، مثلاً:\n"
+                "• _'تقرير شهر 4 2022'_\n"
+                "• _'تقرير سنة 2022'_\n"
+                "• _'تقرير الضريبة'_\n"
+                "• _/today_ أو _/month_\n\n"
+                "📸 *تسجيل الفواتير الذاتي:*\n"
+                "أرسل صورة إغلاق كاشير، أو ملف PDF متعدد الفواتير، أو تسجيل صوتي فويس نوت لتفريغها فورياً."
             )
-            await self.send_message(chat_id, msg)
+            await self.send_message(
+                chat_id, 
+                msg, 
+                reply_markup=self.get_main_keyboard()
+            )
             return
 
-        if text_clean in ["/brief", "/report", "تقرير", "ملخص"]:
+        # 2. دليل المساعدة والتعليمات للعملاء
+        if text_clean in ["/help", "مساعدة", "تعليمات", "اوامر", "أوامر", "❓ مساعدة وأوامر"]:
+            guide = (
+                "📖 *دليل أوامر واختصارات البوت الذكي (Shortcuts & Commands)*\n"
+                "─────────────────────────────\n\n"
+                "🔘 *1. الأزرار السريعة (أسفل الشاشة):*\n"
+                "• *📊 تقرير اليوم:* ملخص مبيعات الوردية اليومية والتحصيلات.\n"
+                "• *📅 تقرير الشهر:* ملخص أعمال الشهر الحالي.\n"
+                "• *🏛️ الإقرار الضريبي:* احتساب ضريبة المبيعات ومطابقة JoFotara.\n"
+                "• *⚠️ تنبيهات التدقيق:* كشف أي فروقات في الصندوق أو الفواتير المعلقة.\n"
+                "• *📈 كافة العمليات:* التقرير الإجمالي الشامل لكافة الفواتير.\n\n"
+                "⌨️ *2. أوامر السلاش (Slash Commands):*\n"
+                "• `/today` - تقرير اليوم\n"
+                "• `/yesterday` - تقرير الأمس\n"
+                "• `/month` - تقرير الشهر الحالي\n"
+                "• `/report` - إظهار قائمة اختيار التقارير التفاعلية\n"
+                "• `/tax` - تقرير الإقرار الضريبي الشامل\n"
+                "• `/audit` - فحص التدقيق والفروقات\n"
+                "• `/all` - كشف كافة العمليات\n\n"
+                "🗣️ *3. طلب تقارير مخصصة باللغة العربية (NLP):*\n"
+                "يمكنك ببساطة كتابة رسالة عادية مثل:\n"
+                "• _'اعطيني تقرير شهر 4 2022'_\n"
+                "• _'تقرير سنة 2022'_\n"
+                "• _'تقرير شهر نيسان'_\n"
+                "• _'تقرير الضريبة لسنة 2022'_\n"
+                "• _/report 2022-04_\n\n"
+                "📥 *4. إدخال العمليات:* أرسل صورة أو صوت أو PDF مباشرة!"
+            )
+            await self.send_message(chat_id, guide, reply_markup=self.get_main_keyboard())
+            return
+
+        # 3. فحص تنبيهات التدقيق
+        if text_clean in ["/audit", "تنبيهات", "تنبيهات التدقيق", "⚠️ تنبيهات التدقيق", "فحص"]:
             db = SessionLocal()
             try:
                 org = db.query(Organization).first()
                 if org:
-                    tx_count = db.query(Transaction).filter(Transaction.organization_id == org.id).count()
-                    if tx_count == 0:
-                        await self.send_message(
-                            chat_id, 
-                            "📊 *لا توجد أي عمليات مسجلة حتى الآن.*\nسجل أول عملية لديك بكتابتها أو تصوير فاتورة وسيتم تحديث التقرير فوراً!"
-                        )
-                        return
-
-                    brief = DailySummaryService.generate_morning_brief(db, org.id, date.today())
-                    await self.send_message(chat_id, brief["whatsapp_formatted_text"])
+                    flags = db.query(AuditFlag).filter(AuditFlag.organization_id == org.id, AuditFlag.resolved == False).all()
+                    if not flags:
+                        await self.send_message(chat_id, "✅ *سجل التدقيق نظيف تماماً!*\nلا توجد أي ملاحظات أو فروقات حسابية غير محلولة.", reply_markup=self.get_main_keyboard())
+                    else:
+                        lines = [f"⚠️ *تنبيهات التدقيق المعلقة ({len(flags)}):*", "───────────────────"]
+                        for f in flags[:8]:
+                            lines.append(f"• [{f.severity}] {f.message}")
+                        lines.append("\n🖥️ _يمكنك حل هذه التنبيهات من لوحة التحكم بنقرة واحدة._")
+                        await self.send_message(chat_id, "\n".join(lines), reply_markup=self.get_main_keyboard())
                 else:
-                    await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة بعد.")
+                    await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
             finally:
                 db.close()
             return
 
-        # تحليل النص واستخراج البيانات الحسابية
+        # 4. فحص ما إذا كانت الرسالة طلباً لتقرير مخصص (شهر/سنة/يوم/ضريبة/كافة العمليات)
+        parsed_report = self._parse_report_request(text_clean)
+        if parsed_report:
+            await self._execute_custom_report(chat_id, parsed_report)
+            return
+
+        # 5. إذا لم تكن طلباً لتقرير، يتم تحليلها كعملية مالية مسجلة عبر الذكاء الاصطناعي
         await self.send_message(chat_id, "⏳ جاري تحليل النص واستخراج الأرقام الحقيقية بدقة...")
         biz_ctx = self._get_business_context()
         extracted_data = await AIParserService.parse_document(
@@ -437,6 +738,10 @@ class TelegramBotRunner:
 
         print("[TelegramBot] Connected to Telegram. Single Polling active (Images + Text + Voice Notes)...")
         self.is_running = True
+        
+        # تسجيل قائمة الأوامر التلقائية في واجهة تيليجرام
+        await self.set_bot_commands()
+
         scheduler_task = asyncio.create_task(self._daily_scheduler_loop())
 
         try:
@@ -450,6 +755,12 @@ class TelegramBotRunner:
                             updates = data.get("result", [])
                             for update in updates:
                                 self.offset = update["update_id"] + 1
+
+                                # معالجة نقرات الأزرار التفاعلية (Inline Keyboard Buttons)
+                                if "callback_query" in update:
+                                    await self.handle_callback_query(update["callback_query"])
+                                    continue
+
                                 msg = update.get("message", {})
                                 chat_id = msg.get("chat", {}).get("id")
                                 if not chat_id:
