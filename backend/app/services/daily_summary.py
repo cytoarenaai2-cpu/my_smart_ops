@@ -1,4 +1,4 @@
-﻿from typing import List, Dict, Any
+from typing import List, Dict, Any
 from datetime import date
 from sqlalchemy.orm import Session
 from app.models.schema import Transaction, Branch, AuditFlag, Organization
@@ -19,11 +19,22 @@ class DailySummaryService:
         org_name = org.name if org else "المنشأة"
         currency = org.currency if org else settings.DEFAULT_CURRENCY
 
-        # 1. استرجاع معاملات اليوم المستهدف
+        # 1. استرجاع معاملات اليوم المستهدف (مع الرجوع الذكي لأحدث يوم عمل إذا لم تسجل حركات في التاريخ المحدد)
         txs = db.query(Transaction).filter(
             Transaction.organization_id == organization_id,
             Transaction.transaction_date == target_date
         ).all()
+
+        if not txs:
+            latest_tx = db.query(Transaction).filter(
+                Transaction.organization_id == organization_id
+            ).order_by(Transaction.transaction_date.desc()).first()
+            if latest_tx:
+                target_date = latest_tx.transaction_date
+                txs = db.query(Transaction).filter(
+                    Transaction.organization_id == organization_id,
+                    Transaction.transaction_date == target_date
+                ).all()
 
         sales_total = 0.0
         tax_collected = 0.0

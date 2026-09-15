@@ -1,4 +1,4 @@
-﻿from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 from datetime import date
 from pydantic import BaseModel, Field
 from app.models.schema import Transaction, AuditFlag, Organization
@@ -33,6 +33,8 @@ class PaymentReconciliationSummary(BaseModel):
     cards_pos_collected: float = 0.0
     cliq_collected: float = 0.0
     delivery_collected: float = 0.0
+    bank_transfer_collected: float = 0.0
+    other_collected: float = 0.0
     total_payments_reconciled: float = 0.0
     variance: float = 0.0
     has_discrepancy: bool = False
@@ -61,7 +63,8 @@ class JordanTaxEngine:
             if tx.transaction_type == "SALE":
                 gross_sales += tx.total_amount
                 if tx.tax_status == "STANDARD_16":
-                    taxable_sales_subtotal += tx.subtotal
+                    # احتساب الوعاء الخاضع للضريبة بما يشمل بدل الخدمة في قطاع المطاعم
+                    taxable_sales_subtotal += (tx.subtotal + (tx.service_charge or 0.0))
                     output_tax_collected += tx.tax_amount
                 else:
                     exempt_or_zero_sales += tx.total_amount
@@ -111,17 +114,25 @@ class JordanTaxEngine:
         cards = 0.0
         cliq = 0.0
         delivery = 0.0
+        bank_transfer = 0.0
+        other = 0.0
 
         for tx in transactions:
             if tx.transaction_type == "SALE":
                 total_sales += tx.total_amount
                 pb = tx.payment_breakdown or {}
-                cash += pb.get("cash", 0.0)
-                cards += pb.get("card", 0.0)
-                cliq += pb.get("cliq", 0.0)
-                delivery += pb.get("delivery_apps", 0.0)
+                # في حال عدم وجود تفصيل للمدفوعات، تعتبر نقدية كاش افتراضياً
+                if not pb or not any(pb.values()):
+                    cash += tx.total_amount
+                else:
+                    cash += pb.get("cash", 0.0)
+                    cards += pb.get("card", 0.0)
+                    cliq += pb.get("cliq", 0.0)
+                    delivery += pb.get("delivery_apps", 0.0)
+                    bank_transfer += pb.get("bank_transfer", 0.0)
+                    other += pb.get("other", 0.0)
 
-        total_payments = cash + cards + cliq + delivery
+        total_payments = cash + cards + cliq + delivery + bank_transfer + other
         variance = round(abs(total_sales - total_payments), 3)
         has_discrepancy = variance > 0.050  # أكثر من 50 فلس
 
@@ -131,6 +142,8 @@ class JordanTaxEngine:
             cards_pos_collected=round(cards, 3),
             cliq_collected=round(cliq, 3),
             delivery_collected=round(delivery, 3),
+            bank_transfer_collected=round(bank_transfer, 3),
+            other_collected=round(other, 3),
             total_payments_reconciled=round(total_payments, 3),
             variance=variance,
             has_discrepancy=has_discrepancy
@@ -181,11 +194,19 @@ class JordanTaxEngine:
                 f"لديك رصيد ضريبي دائن مدور بقيمة: {tax_pos.tax_credit_carried_forward:,.3f} د.أ يمكن ترصيده للفترات الضريبية القادمة."
             )
 
+        earliest_date = str(min((t.transaction_date for t in transactions), default=""))
+        latest_date = str(max((t.transaction_date for t in transactions), default=""))
+
         return {
             "metadata": {
                 "organization_name": organization.name,
                 "tax_number": organization.tax_number or "غير مدخل",
                 "period": period_name,
+                "transactions_count": len(transactions),
+                "date_range": {
+                    "from": earliest_date if earliest_date else None,
+                    "to": latest_date if latest_date else None
+                },
                 "report_generated_date": str(date.today()),
                 "compliance_score": compliance_score,
                 "is_audit_ready": compliance_score >= 85,

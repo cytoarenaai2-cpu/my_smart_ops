@@ -491,6 +491,18 @@
           <i data-lucide="x" class="w-4 h-4 sm:w-5 sm:h-5"></i>
         </button>
       </div>
+      <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/80 text-xs">
+        <div class="flex items-center gap-1.5 text-slate-300 font-medium">
+          <i data-lucide="calendar" class="w-4 h-4 text-sky-400"></i>
+          <span>فترة الإقرار الضريبي:</span>
+        </div>
+        <div class="flex flex-wrap gap-1.5" id="taxPeriodBtns">
+          <button data-period="all" class="tax-period-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-600 text-white transition shadow-sm">كافة العمليات (الكل)</button>
+          <button data-period="30" class="tax-period-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition">آخر 30 يوم</button>
+          <button data-period="90" class="tax-period-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition">الربع الحالي (90 يوم)</button>
+          <button data-period="365" class="tax-period-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition">السنة المالية (365 يوم)</button>
+        </div>
+      </div>
 
       <div id="taxModalContent" class="space-y-4 text-xs">
         <p class="text-center py-8 text-slate-400">جاري تجميع بيانات الإقرار ومطابقة الفواتير والتحصيلات...</p>

@@ -809,14 +809,30 @@ function setupTaxModal() {
   const closeBtn2 = document.getElementById("closeTaxModalBtn2");
   const printBtn = document.getElementById("printTaxReportBtn");
   const content = document.getElementById("taxModalContent");
+  const periodBtns = document.querySelectorAll(".tax-period-btn");
 
-  openBtn.addEventListener("click", async () => {
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
-    content.innerHTML = `<p class="text-center py-8 text-slate-400">جاري تجميع بيانات الإقرار بناءً على العمليات الحقيقية...</p>`;
+  let currentTaxPeriod = "all";
+
+  async function fetchAndRenderTaxReport(period = "all") {
+    currentTaxPeriod = period;
+
+    // Update active tab styles
+    periodBtns.forEach(b => {
+      if (b.getAttribute("data-period") === period) {
+        b.className = "tax-period-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-600 text-white transition shadow-sm";
+      } else {
+        b.className = "tax-period-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition";
+      }
+    });
+
+    content.innerHTML = `<p class="text-center py-8 text-slate-400">جاري تجميع بيانات الإقرار ومطابقة الفواتير والتحصيلات...</p>`;
 
     try {
-      const res = await fetch("/api/v1/tax/pre-filing-report?days=30");
+      const url = period === "all" 
+        ? "/api/v1/tax/pre-filing-report?all_time=true" 
+        : `/api/v1/tax/pre-filing-report?days=${period}`;
+      
+      const res = await fetch(url);
       if (!res.ok) throw new Error("فشل جلب تقرير الإقرار");
       const r = await res.json();
 
@@ -824,19 +840,27 @@ function setupTaxModal() {
       const p = r.tax_position;
       const rec = r.payment_reconciliation;
 
+      const otherPayments = (Number(rec.bank_transfer_collected) || 0) + (Number(rec.other_collected) || 0);
+
       content.innerHTML = `
         <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div><span class="text-slate-400">اسم المنشأة:</span> <div class="font-bold text-white">${m.organization_name}</div></div>
           <div><span class="text-slate-400">الرقم الضريبي:</span> <div class="font-bold text-sky-400 font-mono">${m.tax_number}</div></div>
+          <div><span class="text-slate-400">فترة الإقرار:</span> <div class="font-medium text-amber-300">${m.period || "كافة العمليات"}</div></div>
+          <div><span class="text-slate-400">العمليات المشمولة:</span> <div class="font-bold text-white font-mono">${m.transactions_count !== undefined ? m.transactions_count + ' فاتورة' : '—'}</div></div>
           <div><span class="text-slate-400">تاريخ الإعداد:</span> <div class="font-medium text-slate-300">${m.report_generated_date}</div></div>
-          <div><span class="text-slate-400">درجة الجاهزية:</span> <div class="font-bold ${m.is_audit_ready ? 'text-emerald-400' : 'text-amber-400'}">${m.compliance_score}% (${m.is_audit_ready ? 'جاهز للتقديم' : 'يتطلب مراجعة'})</div></div>
+          <div><span class="text-slate-400">نطاق التواريخ:</span> <div class="font-medium text-slate-300 font-mono text-[11px]">${m.date_range?.from ? `${m.date_range.from} إلى ${m.date_range.to}` : '—'}</div></div>
+          <div class="col-span-2"><span class="text-slate-400">درجة الجاهزية:</span> <div class="font-bold ${m.is_audit_ready ? 'text-emerald-400' : 'text-amber-400'}">${m.compliance_score}% (${m.is_audit_ready ? 'جاهز للتقديم' : 'يتطلب مراجعة'})</div></div>
         </div>
 
         <div class="space-y-2">
-          <h4 class="font-bold text-white text-sm">1. ملخص ضريبة المبيعات العامة (16%)</h4>
+          <h4 class="font-bold text-white text-sm flex items-center justify-between">
+            <span>1. ملخص ضريبة المبيعات العامة (16%)</span>
+            <span class="text-xs font-normal text-slate-400">النظام الضريبي الأردني (ISTD / JoFotara)</span>
+          </h4>
           <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden">
             <tbody class="divide-y divide-slate-800 text-slate-200">
-              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">إجمالي المبيعات الخاضعة للضريبة:</td><td class="p-2 font-mono font-bold">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td></tr>
+              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">إجمالي المبيعات الخاضعة للضريبة (مع بدل الخدمة):</td><td class="p-2 font-mono font-bold">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td></tr>
               <tr><td class="p-2 text-slate-300">ضريبة المبيعات المحصلة (Output Tax 16%):</td><td class="p-2 font-mono font-bold text-sky-400">${Number(p.output_tax_collected).toFixed(3)} د.أ</td></tr>
               <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">ضريبة المدخلات المقبولة للخصم (Input Tax):</td><td class="p-2 font-mono font-bold text-emerald-400">(${Number(p.eligible_input_tax).toFixed(3)}) د.أ</td></tr>
               <tr class="bg-sky-950/60 font-bold"><td class="p-2.5 text-sky-200 text-sm">صافي الضريبة العامة المستحقة للدائرة (أو رصيد دائن):</td><td class="p-2.5 font-mono text-base text-sky-300">${p.net_sales_tax_payable > 0 ? Number(p.net_sales_tax_payable).toFixed(3) + ' د.أ (للدفع)' : Number(p.tax_credit_carried_forward).toFixed(3) + ' د.أ (رصيد دائن)'}</td></tr>
@@ -845,12 +869,22 @@ function setupTaxModal() {
         </div>
 
         <div class="space-y-2">
-          <h4 class="font-bold text-white text-sm">2. مطابقة المبيعات مع وسائل التحصيل الفعلية (Reconciliation)</h4>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-800/40 p-3 rounded-xl border border-slate-800">
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold text-white text-sm">2. مطابقة المبيعات مع وسائل التحصيل الفعلية (Reconciliation)</h4>
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium ${rec.has_discrepancy ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}">
+              ${rec.has_discrepancy ? `⚠️ فارق: ${Number(rec.variance).toFixed(3)} د.أ` : '✅ مطابقة تامة'}
+            </span>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-800/40 p-3 rounded-xl border border-slate-800 text-xs">
             <div><span class="text-slate-400">كاش الصندوق:</span> <div class="font-mono font-bold">${Number(rec.cash_collected).toFixed(3)} د.أ</div></div>
             <div><span class="text-slate-400">بطاقات (POS):</span> <div class="font-mono font-bold">${Number(rec.cards_pos_collected).toFixed(3)} د.أ</div></div>
             <div><span class="text-slate-400">كليك (CliQ):</span> <div class="font-mono font-bold text-purple-400">${Number(rec.cliq_collected).toFixed(3)} د.أ</div></div>
-            <div><span class="text-slate-400">تطبيقات التوصيل:</span> <div class="font-mono font-bold">${Number(rec.delivery_collected).toFixed(3)} د.أ</div></div>
+            <div><span class="text-slate-400">تطبيقات توصيل:</span> <div class="font-mono font-bold">${Number(rec.delivery_collected).toFixed(3)} د.أ</div></div>
+            <div><span class="text-slate-400">تحويل / أخرى:</span> <div class="font-mono font-bold text-slate-300">${otherPayments.toFixed(3)} د.أ</div></div>
+          </div>
+          <div class="flex justify-between items-center bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-800 text-xs text-slate-300">
+            <span>إجمالي المقبوضات المطابقة: <strong class="text-white font-mono">${Number(rec.total_payments_reconciled).toFixed(3)} د.أ</strong></span>
+            <span>إجمالي المبيعات المصرحة: <strong class="text-white font-mono">${Number(rec.total_sales_reported).toFixed(3)} د.أ</strong></span>
           </div>
         </div>
 
@@ -873,6 +907,20 @@ function setupTaxModal() {
     } catch (err) {
       content.innerHTML = `<p class="text-center py-8 text-rose-400">❌ حدث خطأ أثناء إعداد التقرير: ${err.message}</p>`;
     }
+  }
+
+  // Setup period tab listeners
+  periodBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const p = btn.getAttribute("data-period");
+      fetchAndRenderTaxReport(p);
+    });
+  });
+
+  openBtn.addEventListener("click", () => {
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    fetchAndRenderTaxReport(currentTaxPeriod);
   });
 
   const closeModal = () => {

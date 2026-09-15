@@ -1,4 +1,4 @@
-﻿from datetime import date, timedelta
+from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
@@ -9,10 +9,70 @@ from app.services.tax_engine import JordanTaxEngine
 
 router = APIRouter(prefix="/tax", tags=["Jordan Tax & JoFotara Compliance"])
 
+def _filter_tax_transactions(
+    db: Session,
+    organization_id: str,
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    all_time: bool = False,
+    period_name: Optional[str] = None
+) -> tuple[List[Transaction], str]:
+    query = db.query(Transaction).filter(Transaction.organization_id == organization_id)
+
+    if start_date:
+        query = query.filter(Transaction.transaction_date >= start_date)
+    if end_date:
+        query = query.filter(Transaction.transaction_date <= end_date)
+
+    computed_period = period_name
+
+    # إذا طلب المستخدم صراحة كافة الفترات أو لم يتم تحديد تاريخ
+    if all_time or (days is None and not start_date and not end_date):
+        txs = query.order_by(Transaction.transaction_date.desc()).all()
+        if not computed_period:
+            computed_period = "كافة العمليات المسجلة"
+        return txs, computed_period
+
+    # في حال تحديد عدد أيام (مثل 30 يوم)
+    if days and not start_date:
+        cutoff = date.today() - timedelta(days=days)
+        period_txs = query.filter(Transaction.transaction_date >= cutoff).order_by(Transaction.transaction_date.desc()).all()
+        
+        if period_txs:
+            if not computed_period:
+                computed_period = f"آخر {days} يوم"
+            return period_txs, computed_period
+        else:
+            # إذا لم توجد فواتير في الفترة المحددة ولكن توجد فواتير أرشيفية/سابقة
+            all_txs = query.order_by(Transaction.transaction_date.desc()).all()
+            if all_txs:
+                if not computed_period:
+                    computed_period = "كافة العمليات المسجلة (فواتير أرشيفية)"
+                return all_txs, computed_period
+            else:
+                if not computed_period:
+                    computed_period = f"آخر {days} يوم"
+                return [], computed_period
+
+    txs = query.order_by(Transaction.transaction_date.desc()).all()
+    if not computed_period:
+        if start_date and end_date:
+            computed_period = f"من {start_date} إلى {end_date}"
+        elif start_date:
+            computed_period = f"من {start_date}"
+        else:
+            computed_period = "الفترة المحددة"
+    return txs, computed_period
+
+
 @router.get("/summary")
 def get_tax_summary(
     organization_id: Optional[str] = Query(None),
-    days: int = Query(30, ge=1, le=365),
+    days: Optional[int] = Query(None, ge=1, le=3650),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    all_time: bool = Query(False),
     db: Session = Depends(get_db)
 ):
     """
@@ -24,18 +84,22 @@ def get_tax_summary(
             raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
         organization_id = org.id
 
-    start_date = date.today() - timedelta(days=days)
-
-    txs = db.query(Transaction).filter(
-        Transaction.organization_id == organization_id,
-        Transaction.transaction_date >= start_date
-    ).all()
+    txs, computed_period = _filter_tax_transactions(
+        db=db,
+        organization_id=organization_id,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        all_time=all_time
+    )
 
     tax_pos = JordanTaxEngine.calculate_tax_position(txs)
     reconcile = JordanTaxEngine.reconcile_payments(txs)
 
     return {
+        "period": computed_period,
         "period_days": days,
+        "transactions_count": len(txs),
         "tax_position": tax_pos.model_dump(),
         "payment_reconciliation": reconcile.model_dump()
     }
@@ -44,8 +108,11 @@ def get_tax_summary(
 @router.get("/pre-filing-report")
 def get_pre_filing_report(
     organization_id: Optional[str] = Query(None),
-    period_name: str = Query("الشهر الحالي"),
-    days: int = Query(30, ge=1, le=365),
+    period_name: Optional[str] = Query(None),
+    days: Optional[int] = Query(None, ge=1, le=3650),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    all_time: bool = Query(False),
     db: Session = Depends(get_db)
 ):
     """
@@ -59,12 +126,15 @@ def get_pre_filing_report(
     if not org:
         raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
 
-    start_date = date.today() - timedelta(days=days)
-
-    txs = db.query(Transaction).filter(
-        Transaction.organization_id == org.id,
-        Transaction.transaction_date >= start_date
-    ).all()
+    txs, computed_period = _filter_tax_transactions(
+        db=db,
+        organization_id=org.id,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        all_time=all_time,
+        period_name=period_name
+    )
 
     flags = db.query(AuditFlag).filter(
         AuditFlag.organization_id == org.id,
@@ -75,7 +145,7 @@ def get_pre_filing_report(
         organization=org,
         transactions=txs,
         audit_flags=flags,
-        period_name=period_name
+        period_name=computed_period
     )
 
 

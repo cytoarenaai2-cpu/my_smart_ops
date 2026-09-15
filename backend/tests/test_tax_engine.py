@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from datetime import date
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -187,3 +187,37 @@ def test_tax_api_and_pre_filing_report(client, db_session):
     risk_data = risk_res.json()
     assert len(risk_data) == 1
     assert risk_data[0]["invoice_number"] == "EXP-991"
+
+def test_historical_invoices_tax_report_fallback(client, db_session):
+    """فحص عدم تصفير التقرير للفواتير التاريخية (أقدم من 30 يوماً) واسترجاعها بذكاء"""
+    org = Organization(name="مطعم وكافيه الروشة القديم", currency="JOD", tax_number="999888777")
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+
+    old_tx = Transaction(
+        organization_id=org.id,
+        transaction_type="SALE",
+        transaction_date=date(2022, 4, 5),
+        invoice_number="INV-OLD-1",
+        subtotal=100.0,
+        service_charge=10.0,
+        tax_amount=17.6,
+        total_amount=127.6,
+        payment_breakdown={"other": 127.6},
+        tax_status="STANDARD_16"
+    )
+    db_session.add(old_tx)
+    db_session.commit()
+
+    # طلب التقرير مع days=30 (الوضع الافتراضي القديم الذي كان يعيد أصفاراً)
+    res = client.get(f"/api/v1/tax/pre-filing-report?organization_id={org.id}&days=30")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["metadata"]["transactions_count"] == 1
+    assert data["tax_position"]["gross_sales"] == 127.6
+    assert data["tax_position"]["taxable_sales_subtotal"] == 110.0  # 100 + 10 service
+    assert data["tax_position"]["output_tax_collected"] == 17.6
+    assert data["payment_reconciliation"]["other_collected"] == 127.6
+    assert data["payment_reconciliation"]["variance"] == 0.0
+
