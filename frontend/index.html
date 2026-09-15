@@ -760,6 +760,133 @@
     </div>
   </div>
 
+  <!-- Batch PDF Processing Summary Modal -->
+  <div id="pdfBatchModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-3xl rounded-2xl shadow-2xl p-4 sm:p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto custom-scrollbar">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="files" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <span>تقرير تدقيق حزمة فواتير PDF المجمعة</span>
+              <span id="batchModalFileName" class="text-xs font-mono font-normal bg-purple-950/60 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30"></span>
+            </h3>
+            <p class="text-[11px] sm:text-xs text-slate-400">نتائج تفكيك الصفحات واستخراج الفواتير الفردية والمطابقة الضريبية</p>
+          </div>
+        </div>
+        <button type="button" id="closeBatchModalBtn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Quick KPI Cards Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        <!-- Card 1: Pages & Invoices -->
+        <div class="bg-slate-950/70 border border-slate-800 p-3 rounded-xl">
+          <span class="text-[11px] text-slate-400 block">الصفحات / الفواتير:</span>
+          <div class="flex items-baseline gap-1 mt-1">
+            <span id="batchSummaryInvoicesCount" class="text-lg sm:text-xl font-bold font-mono text-purple-400">0</span>
+            <span class="text-[10px] text-slate-400">فاتورة</span>
+          </div>
+          <span id="batchSummaryPagesCount" class="text-[10px] text-slate-500 block mt-0.5">من 0 صفحة</span>
+        </div>
+
+        <!-- Card 2: Total Sales -->
+        <div class="bg-slate-950/70 border border-slate-800 p-3 rounded-xl">
+          <span class="text-[11px] text-emerald-400 block">إجمالي المبيعات:</span>
+          <div class="flex items-baseline gap-1 mt-1">
+            <span id="batchSummarySalesAmount" class="text-lg sm:text-xl font-bold font-mono text-emerald-400">0.000</span>
+            <span class="text-[10px] text-slate-400">د.أ</span>
+          </div>
+          <span id="batchSummarySalesCount" class="text-[10px] text-slate-400 block mt-0.5">0 فاتورة مبيعات</span>
+        </div>
+
+        <!-- Card 3: Purchases & Expenses -->
+        <div class="bg-slate-950/70 border border-slate-800 p-3 rounded-xl">
+          <span class="text-[11px] text-amber-400 block">المشتريات والمصروفات:</span>
+          <div class="flex items-baseline gap-1 mt-1">
+            <span id="batchSummaryPurchasesAmount" class="text-lg sm:text-xl font-bold font-mono text-amber-400">0.000</span>
+            <span class="text-[10px] text-slate-400">د.أ</span>
+          </div>
+          <span id="batchSummaryPurchasesCount" class="text-[10px] text-slate-400 block mt-0.5">0 فاتورة موردين</span>
+        </div>
+
+        <!-- Card 4: Net Tax -->
+        <div class="bg-slate-950/70 border border-slate-800 p-3 rounded-xl">
+          <span class="text-[11px] text-sky-400 block">صافي الضريبة التقديري:</span>
+          <div class="flex items-baseline gap-1 mt-1">
+            <span id="batchSummaryNetTax" class="text-lg sm:text-xl font-bold font-mono text-sky-400">0.000</span>
+            <span class="text-[10px] text-slate-400">د.أ</span>
+          </div>
+          <span id="batchSummaryTaxBreakdown" class="text-[10px] text-slate-500 block mt-0.5">مخرجات 0 | مدخلات 0</span>
+        </div>
+      </div>
+
+      <!-- Audit Status Banner -->
+      <div id="batchAuditStatusBanner" class="p-3 rounded-xl text-xs flex items-center justify-between gap-3 bg-slate-950/60 border border-slate-800">
+        <div class="flex items-center gap-2">
+          <span id="batchApprovedBadge" class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span id="batchApprovedCount">0</span> معتمدة وسليمة
+          </span>
+          <span id="batchReviewBadge" class="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+            <span id="batchReviewCount">0</span> بحاجة لمراجعة
+          </span>
+        </div>
+        <span class="text-[11px] text-slate-400">تم تسجيل كافة الفواتير في قاعدة البيانات</span>
+      </div>
+
+      <!-- Warnings list (if any) -->
+      <div id="batchWarningsContainer" class="hidden bg-amber-950/30 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200 space-y-1.5">
+        <div class="font-bold flex items-center gap-1.5 text-amber-300">
+          <i data-lucide="alert-circle" class="w-4 h-4"></i>
+          <span>ملاحظات التدقيق الضريبي والمحاسبي للحزمة:</span>
+        </div>
+        <ul id="batchWarningsList" class="list-disc list-inside text-[11px] space-y-1 text-slate-300"></ul>
+      </div>
+
+      <!-- Invoices Table -->
+      <div>
+        <h4 class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
+          <i data-lucide="list" class="w-3.5 h-3.5 text-slate-400"></i>
+          <span>الفواتير المستخرجة من الملف:</span>
+        </h4>
+        <div class="overflow-x-auto rounded-xl border border-slate-800 max-h-60 overflow-y-auto custom-scrollbar">
+          <table class="w-full text-right text-xs">
+            <thead class="bg-slate-950 text-slate-400 sticky top-0">
+              <tr>
+                <th class="p-2.5">الصفحة</th>
+                <th class="p-2.5">رقم الفاتورة</th>
+                <th class="p-2.5">النوع</th>
+                <th class="p-2.5">الفرع / المورد</th>
+                <th class="p-2.5">المبلغ (د.أ)</th>
+                <th class="p-2.5">الضريبة 16%</th>
+                <th class="p-2.5 text-center">الحالة</th>
+              </tr>
+            </thead>
+            <tbody id="batchInvoicesTableBody" class="divide-y divide-slate-800 bg-slate-900/50 text-slate-200 font-mono">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex justify-end pt-3 border-t border-slate-800">
+        <button type="button" id="closeBatchModalBtn2" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 active:scale-95 shadow-md shadow-purple-900/30">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          <span>تم، استعراض العمليات في لوحة التحكم</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
   <script>
     lucide.createIcons();

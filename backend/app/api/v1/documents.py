@@ -10,6 +10,7 @@ from app.models.schema import Organization, Branch, Document, Transaction, Trans
 from app.models.extraction_schemas import ExtractedDocumentData, DocumentTypeEnum
 from app.services.ai_parser import AIParserService
 from app.services.validator import FinancialValidator
+from app.services.pdf_batch_service import PDFBatchService
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -52,8 +53,39 @@ async def upload_and_process_document(
 
     if file:
         image_bytes = await file.read()
-        file_hash = hashlib.sha256(image_bytes).hexdigest()
         mime_type = file.content_type or "image/jpeg"
+        file_name = file.filename or "document"
+
+        # معالجة ملفات الـ PDF متعددة الصفحات والفواتير عبر مسار الحزم المتخصص
+        if mime_type == "application/pdf" or file_name.lower().endswith(".pdf"):
+            try:
+                batch_res = await PDFBatchService.process_pdf(
+                    pdf_bytes=image_bytes,
+                    file_name=file_name,
+                    db=db,
+                    organization_id=organization_id,
+                    branch_id=branch_id
+                )
+                return {
+                    "success": True,
+                    "is_batch": True,
+                    "message": f"تمت معالجة ملف PDF ({file_name}) بنجاح: تم تحليل {batch_res['total_pages']} صفحة واستخراج {batch_res['total_invoices']} فاتورة مستقلة.",
+                    "batch_summary": batch_res,
+                    "extracted_summary": {
+                        "type": "حزمة فواتير PDF مجمعة",
+                        "total_amount": round(batch_res["total_sales_amount"] + batch_res["total_purchases_amount"] + batch_res["total_expenses_amount"], 3),
+                        "tax_amount": round(batch_res["total_output_tax"] + batch_res["total_input_tax"], 3),
+                        "payment_breakdown": {},
+                        "merchant_or_branch": f"{batch_res['total_invoices']} فاتورة مستخرجة"
+                    },
+                    "validation_status": "PROCESSED" if batch_res["needs_review_count"] == 0 else "NEEDS_REVIEW",
+                    "flags_count": batch_res["needs_review_count"],
+                    "flags": [{"severity": "WARNING", "flag_type": "BATCH_REVIEW", "message": w} for w in batch_res["warnings"]]
+                }
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"فشل في معالجة ملف الـ PDF: {e}")
+
+        file_hash = hashlib.sha256(image_bytes).hexdigest()
 
         # التحقق من عدم تكرار رفع نفس المستند
         existing_doc = db.query(Document).filter(
@@ -170,3 +202,35 @@ async def upload_and_process_document(
             "merchant_or_branch": tx.merchant_or_supplier_name
         }
     }
+
+
+@router.post("/upload-pdf-batch")
+async def upload_pdf_batch(
+    file: UploadFile = File(...),
+    organization_id: Optional[str] = Form(None),
+    branch_id: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
+):
+    """
+    رفع ومعالجة ملف PDF متعدد الفواتير وتفكيك صفحاته واستخراج كل فاتورة على حدى
+    مع إحصائيات مالية وضريبية شاملة للحزمة.
+    """
+    pdf_bytes = await file.read()
+    file_name = file.filename or "invoices_batch.pdf"
+
+    try:
+        batch_res = await PDFBatchService.process_pdf(
+            pdf_bytes=pdf_bytes,
+            file_name=file_name,
+            db=db,
+            organization_id=organization_id,
+            branch_id=branch_id
+        )
+        return {
+            "success": True,
+            "is_batch": True,
+            "message": f"تمت معالجة ملف PDF ({file_name}) بنجاح: تم فحص {batch_res['total_pages']} صفحة واستخراج {batch_res['total_invoices']} فاتورة مستقلة.",
+            "batch_summary": batch_res
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"خطأ في معالجة ملف الـ PDF: {e}")

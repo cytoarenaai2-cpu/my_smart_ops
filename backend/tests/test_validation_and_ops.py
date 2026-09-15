@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from datetime import date
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -171,7 +171,7 @@ def test_api_endpoints_and_dashboard(client):
     # 3. Upload document
     upload_res = client.post(
         "/api/v1/documents/upload",
-        data={"text_notes": "تقرير إغلاق كاشير يومي مبيعات فرع الجبيهة"}
+        data={"text_notes": "تقرير إغلاق كاشير يومي مبيعات فرع الجبيهة كاش 450 وبطاقات 300"}
     )
     assert upload_res.status_code == 200
     data = upload_res.json()

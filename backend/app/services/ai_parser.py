@@ -2,7 +2,7 @@ import os
 import re
 import json
 import base64
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import httpx
 from app.core.config import settings
 from app.models.extraction_schemas import ExtractedDocumentData, DocumentTypeEnum, ExtractedPaymentBreakdown, ExtractedItem
@@ -207,6 +207,186 @@ class AIParserService:
                 parsed_dict = json.loads(raw_text)
 
             return ExtractedDocumentData(**parsed_dict)
+
+    @classmethod
+    async def parse_pdf_page(
+        cls,
+        pdf_page_bytes: bytes,
+        page_number: int = 1,
+        business_context: Optional[Dict[str, Any]] = None
+    ) -> List[ExtractedDocumentData]:
+        """
+        استخراج الفواتير من صفحة PDF أحادية.
+        تدعم وجود فاتورة واحدة، أو عدة فواتير في الصفحة الواحدة، أو صفحة بدون فواتير.
+        """
+        api_key = settings.GEMINI_API_KEY
+        if not api_key or not pdf_page_bytes:
+            return []
+
+        for model_name in cls.FALLBACK_MODELS:
+            try:
+                results = await cls._call_gemini_pdf_page(
+                    api_key=api_key,
+                    pdf_bytes=pdf_page_bytes,
+                    page_number=page_number,
+                    model_name=model_name,
+                    business_context=business_context
+                )
+                print(f"[AIParserService] Page {page_number}: successfully extracted {len(results)} invoice(s) via {model_name}", flush=True)
+                return results
+            except Exception as e:
+                print(f"[AIParserService] Page {page_number}: model {model_name} attempt failed: {e}", flush=True)
+                continue
+
+        return []
+
+    @classmethod
+    async def _call_gemini_pdf_page(
+        cls,
+        api_key: str,
+        pdf_bytes: bytes,
+        page_number: int,
+        model_name: str = "gemini-3.5-flash",
+        business_context: Optional[Dict[str, Any]] = None
+    ) -> List[ExtractedDocumentData]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+
+        system_text = PARSING_SYSTEM_PROMPT
+        if business_context and business_context.get("business_name"):
+            b_name = business_context.get("business_name", "")
+            b_type = business_context.get("industry_type", "عام")
+            b_tax = business_context.get("tax_number") or "غير محدد"
+            b_branches = business_context.get("branches") or []
+            branches_str = "، ".join(b_branches) if b_branches else "الفرع الرئيسي"
+
+            system_text += f"""
+
+============================================================
+سياق وهوية النشاط التجاري صاحب هذا النظام (حاسم جداً في التمييز والتصنيف):
+- اسم النشاط التجاري / المنشأة: {b_name}
+- طبيعة النشاط التجاري: {b_type}
+- الفروع التابعة للنشاط: {branches_str}
+- الرقم الضريبي للمنشأة: {b_tax}
+
+قواعد التمييز القطعية:
+1. المبيعات (SALES_RECEIPT أو SALES_Z_REPORT):
+   إذا كانت الفاتورة صادرة باسم المنشأة ({b_name}) أو أحد فروعها ({branches_str}) أو كاشير زبائن للنشاط ⬅️ مبيعات.
+2. مشتريات وتوريدات الموردين (PURCHASE_INVOICE أو EXPENSE_RECEIPT):
+   إذا كانت صادرة من مورد أو شركة توزيع أخرى ومنشأتك هي المشتري ⬅️ مشتريات موردين.
+============================================================
+"""
+
+        system_text += f"""
+============================================================
+تنبيه خاص باستخراج الفواتير من صفحة PDF (صفحة رقم {page_number}):
+أمامك صفحة مستند قد تحتوي على:
+1. فاتورة واحدة مستقلة.
+2. أكثر من فاتورة أو إيصال مستقل (مثلاً إيصالين أو أكثر ممسوحة ضوئياً على ورقة A4 واحدة).
+3. لا تحتوي على أي فواتير (مثلاً صفحة غلاف، صفحة بيضاء، أو نصوص عامة لا علاقة لها بالمعاملات المالية).
+
+المطلوب بدقة:
+استخراج كل فاتورة مستقلة موجودة في الصفحة، وإرجاعها كعنصر داخل مصفوفة في كائن JSON باسم "invoices":
+{{
+  "invoices": [
+    {{
+      "document_type": "SALES_RECEIPT" | "SALES_Z_REPORT" | "PURCHASE_INVOICE" | "EXPENSE_RECEIPT" | "OTHER",
+      "merchant_or_branch_name": "اسم الفرع أو المتجر أو المورد",
+      "supplier_tax_id": "الرقم الضريبي للمورد إن وجد أو null",
+      "invoice_number": "رقم الفاتورة إن وجد أو null",
+      "date": "YYYY-MM-DD",
+      "items": [
+        {{"description": "اسم الصنف", "quantity": 1.0, "unit_price": 0.0, "total_price": 0.0, "tax_rate": 0.16, "tax_amount": 0.0}}
+      ],
+      "subtotal": 0.0,
+      "tax_amount": 0.0,
+      "discount_amount": 0.0,
+      "total_amount": 0.0,
+      "payment_breakdown": {{
+        "cash": 0.0,
+        "card": 0.0,
+        "cliq": 0.0,
+        "delivery_apps": 0.0,
+        "bank_transfer": 0.0,
+        "other": 0.0
+      }},
+      "notes": "صفحة {page_number}"
+    }}
+  ]
+}}
+إذا لم تكن الصفحة تحتوي على أي فاتورة، أرجع حصراً: {{"invoices": []}}
+============================================================
+"""
+
+        base64_data = base64.b64encode(pdf_bytes).decode("utf-8")
+        parts = [
+            {"text": system_text},
+            {
+                "inline_data": {
+                    "mime_type": "application/pdf",
+                    "data": base64_data
+                }
+            }
+        ]
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "temperature": 0.1
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=50.0, verify=False) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            res_json = response.json()
+
+            candidate = res_json.get("candidates", [{}])[0]
+            candidate_parts = candidate.get("content", {}).get("parts", [])
+            raw_text = ""
+            for p in candidate_parts:
+                if "text" in p:
+                    raw_text += p["text"]
+
+            if not raw_text.strip():
+                return []
+
+            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if json_match:
+                parsed_data = json.loads(json_match.group(0))
+            else:
+                parsed_data = json.loads(raw_text)
+
+            extracted_list: List[ExtractedDocumentData] = []
+
+            # 1. إذا كان التنسيق المطلوب {"invoices": [...]}
+            if isinstance(parsed_data, dict) and "invoices" in parsed_data:
+                inv_list = parsed_data["invoices"]
+                if isinstance(inv_list, list):
+                    for item in inv_list:
+                        if isinstance(item, dict):
+                            try:
+                                extracted_list.append(ExtractedDocumentData(**item))
+                            except Exception as parse_err:
+                                print(f"[AIParserService] Error parsing invoice item: {parse_err}")
+
+            # 2. إذا أعاد النموذج كائن فاتورة فردي مباشرة بدلاً من مصفوفة
+            elif isinstance(parsed_data, dict) and ("total_amount" in parsed_data or "document_type" in parsed_data):
+                try:
+                    extracted_list.append(ExtractedDocumentData(**parsed_data))
+                except Exception as parse_err:
+                    print(f"[AIParserService] Error parsing single invoice dict: {parse_err}")
+
+            # 3. إذا أعاد مصفوفة فواتير مباشرة
+            elif isinstance(parsed_data, list):
+                for item in parsed_data:
+                    if isinstance(item, dict):
+                        try:
+                            extracted_list.append(ExtractedDocumentData(**item))
+                        except Exception as parse_err:
+                            print(f"[AIParserService] Error parsing invoice list element: {parse_err}")
+
+            return extracted_list
 
     @classmethod
     def _extract_real_numbers_from_text(cls, text_content: Optional[str] = None) -> ExtractedDocumentData:

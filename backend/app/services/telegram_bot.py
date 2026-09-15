@@ -11,6 +11,7 @@ from app.models.extraction_schemas import ExtractedDocumentData, DocumentTypeEnu
 from app.services.ai_parser import AIParserService
 from app.services.validator import FinancialValidator
 from app.services.daily_summary import DailySummaryService
+from app.services.pdf_batch_service import PDFBatchService
 
 class TelegramBotRunner:
     """
@@ -142,6 +143,85 @@ class TelegramBotRunner:
 
         await self._process_and_save_data(chat_id, extracted_data)
 
+    async def handle_document(self, chat_id: int, doc_obj: dict, caption: Optional[str] = None):
+        file_name = doc_obj.get("file_name", "document.pdf")
+        mime_type = doc_obj.get("mime_type", "")
+        file_id = doc_obj.get("file_id")
+
+        if not (file_name.lower().endswith(".pdf") or mime_type == "application/pdf"):
+            await self.send_message(
+                chat_id,
+                "ℹ️ *نوع الملف غير مدعوم حالياً.*\nيدعم النظام ملفات PDF متعددة الفواتير، الصور المباشرة (JPG/PNG)، والرسائل الصوتية."
+            )
+            return
+
+        await self.send_message(
+            chat_id,
+            f"📄 *تم استلام ملف PDF ({file_name})!*\nجاري تفكيك الصفحات وقراءة وتدقيق الفواتير بالذكاء الاصطناعي..."
+        )
+
+        async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+            get_file_res = await client.get(f"{self.base_url}/getFile?file_id={file_id}", headers=self.headers)
+            if get_file_res.status_code != 200:
+                await self.send_message(chat_id, "❌ تعذر جلب رابط ملف الـ PDF من تيليجرام.")
+                return
+
+            file_path = get_file_res.json().get("result", {}).get("file_path")
+            dl_res = await client.get(f"{self.file_base_url}/{file_path}", headers=self.headers)
+            if dl_res.status_code != 200:
+                await self.send_message(chat_id, "❌ فشل تحميل ملف الـ PDF.")
+                return
+
+            pdf_bytes = dl_res.content
+
+        db = SessionLocal()
+        try:
+            print(f"[TelegramBot] Processing PDF batch ({file_name}, {len(pdf_bytes)} bytes)...", flush=True)
+            batch_res = await PDFBatchService.process_pdf(
+                pdf_bytes=pdf_bytes,
+                file_name=file_name,
+                db=db
+            )
+
+            # تنسيق الملخص التنفيذي الشامل للحزمة
+            lines = [
+                f"📑 *ملخص معالجة حزمة PDF ({file_name})*",
+                "─────────────────────────────",
+                f"📄 *الصفحات المعالجة:* {batch_res['total_pages']} صفحة",
+                f"🧾 *إجمالي الفواتير المستخرجة:* {batch_res['total_invoices']} فاتورة",
+                "",
+                f"📈 *إجمالي المبيعات:* {batch_res['total_sales_amount']:.3f} د.أ ({batch_res['sales_count']} فاتورة)",
+                f"🛒 *مشتريات الموردين:* {batch_res['total_purchases_amount']:.3f} د.أ ({batch_res['purchases_count']} فاتورة)",
+                f"💰 *المصروفات النثرية:* {batch_res['total_expenses_amount']:.3f} د.أ ({batch_res['expenses_count']} فاتورة)",
+                "",
+                "🏛️ *المطابقة الضريبية (JoFotara):*",
+                f"  • ضريبة المخرجات: {batch_res['total_output_tax']:.3f} د.أ",
+                f"  • ضريبة المدخلات: {batch_res['total_input_tax']:.3f} د.أ",
+                f"  • صافي الالتزام الضريبي: {batch_res['net_tax_liability']:.3f} د.أ",
+                "",
+                "📌 *حالة الاعتماد والمطابقة:*",
+                f"  • ✅ معتمدة وسليمة: {batch_res['approved_count']} فاتورة",
+                f"  • ⚠️ تحتاج مراجعة: {batch_res['needs_review_count']} فاتورة"
+            ]
+
+            if batch_res["warnings"]:
+                lines.append("")
+                lines.append("⚠️ *ملاحظات وتنبيهات التدقيق:*")
+                for w in batch_res["warnings"][:5]:
+                    lines.append(f"  - {w}")
+                if len(batch_res["warnings"]) > 5:
+                    lines.append(f"  - _و {len(batch_res['warnings']) - 5} ملاحظات إضافية في لوحة التحكم..._")
+
+            lines.append("")
+            lines.append("🖥️ _تم تسجيل كافة الفواتير كقيود مستقلة وتحديث لوحة التحكم فورياً!_")
+
+            await self.send_message(chat_id, "\n".join(lines))
+        except Exception as e:
+            print(f"[TelegramBot] Error in PDF processing: {e}", flush=True)
+            await self.send_message(chat_id, f"❌ حدث خطأ أثناء معالجة ملف الـ PDF: {str(e)[:150]}")
+        finally:
+            db.close()
+
     async def handle_text(self, chat_id: int, text: str):
         text_clean = text.strip()
 
@@ -149,6 +229,8 @@ class TelegramBotRunner:
             msg = (
                 "👋 *أهلاً بك في المساعد المالي والتنفيذي والضريبي الذكي!*\n\n"
                 "هذا البوت مرتبط مباشرة بلوحة التحكم والمحرك الضريبي الأردني (JoFotara):\n\n"
+                "📄 *لمعالجة ملفات PDF مجمعة:*\n"
+                "أرسل ملف PDF يحتوي على صفحات وفواتير متعددة وسيقوم النظام بتفكيكها واستخراج كل فاتورة على حدى وإعطائك تقريراً إحصائياً شاملاً!\n\n"
                 "📸 *لتسجيل فواتير ومبيعات بالصور:*\n"
                 "صوّر بكاميرا هاتفك إغلاق الكاشير (Z-Report) أو أي فاتورة شراء أو إيصال مصروف وأرسلها هنا فوراً.\n\n"
                 "🎙️ *لتسجيل فويس نوت صوتي:*\n"
@@ -382,6 +464,8 @@ class TelegramBotRunner:
                                     await self.handle_voice(chat_id, msg["audio"])
                                 elif "photo" in msg:
                                     await self.handle_photo(chat_id, msg["photo"], msg.get("caption"))
+                                elif "document" in msg:
+                                    await self.handle_document(chat_id, msg["document"], msg.get("caption"))
                                 elif "text" in msg:
                                     await self.handle_text(chat_id, msg["text"])
                         elif resp.status_code == 401:

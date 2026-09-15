@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupBriefButton();
   setupTaxModal();
   setupReviewModal();
+  setupBatchModal();
   setupResetButton();
 
   const refreshBtn = document.getElementById("refreshBtn");
@@ -343,6 +344,112 @@ function setupReviewModal() {
   }
 }
 
+// 12. Setup Batch PDF Summary Modal & Viewer
+function setupBatchModal() {
+  const modal = document.getElementById("pdfBatchModal");
+  const closeBtn1 = document.getElementById("closeBatchModalBtn");
+  const closeBtn2 = document.getElementById("closeBatchModalBtn2");
+
+  const close = () => {
+    if (modal) {
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+  };
+
+  if (closeBtn1) closeBtn1.addEventListener("click", close);
+  if (closeBtn2) closeBtn2.addEventListener("click", close);
+}
+
+function showBatchSummaryModal(batch) {
+  const modal = document.getElementById("pdfBatchModal");
+  if (!modal || !batch) return;
+
+  const fileNameEl = document.getElementById("batchModalFileName");
+  if (fileNameEl) fileNameEl.textContent = batch.file_name || "ملف PDF";
+
+  const invCountEl = document.getElementById("batchSummaryInvoicesCount");
+  if (invCountEl) invCountEl.textContent = batch.total_invoices || 0;
+
+  const pagesCountEl = document.getElementById("batchSummaryPagesCount");
+  if (pagesCountEl) pagesCountEl.textContent = `من ${batch.total_pages || 0} صفحة`;
+
+  const salesAmountEl = document.getElementById("batchSummarySalesAmount");
+  if (salesAmountEl) salesAmountEl.textContent = Number(batch.total_sales_amount || 0).toFixed(3);
+
+  const salesCountEl = document.getElementById("batchSummarySalesCount");
+  if (salesCountEl) salesCountEl.textContent = `${batch.sales_count || 0} فاتورة مبيعات`;
+
+  const totalPurchasesAndExpenses = (batch.total_purchases_amount || 0) + (batch.total_expenses_amount || 0);
+  const purchasesAmountEl = document.getElementById("batchSummaryPurchasesAmount");
+  if (purchasesAmountEl) purchasesAmountEl.textContent = Number(totalPurchasesAndExpenses).toFixed(3);
+
+  const purchasesCountEl = document.getElementById("batchSummaryPurchasesCount");
+  if (purchasesCountEl) purchasesCountEl.textContent = `${(batch.purchases_count || 0) + (batch.expenses_count || 0)} فاتورة مشتريات/مصاريف`;
+
+  const netTaxEl = document.getElementById("batchSummaryNetTax");
+  if (netTaxEl) netTaxEl.textContent = Number(batch.net_tax_liability || 0).toFixed(3);
+
+  const taxBreakdownEl = document.getElementById("batchSummaryTaxBreakdown");
+  if (taxBreakdownEl) taxBreakdownEl.textContent = `مخرجات: ${Number(batch.total_output_tax || 0).toFixed(3)} | مدخلات: ${Number(batch.total_input_tax || 0).toFixed(3)}`;
+
+  const approvedCountEl = document.getElementById("batchApprovedCount");
+  if (approvedCountEl) approvedCountEl.textContent = batch.approved_count || 0;
+
+  const reviewCountEl = document.getElementById("batchReviewCount");
+  if (reviewCountEl) reviewCountEl.textContent = batch.needs_review_count || 0;
+
+  // Warnings
+  const warnContainer = document.getElementById("batchWarningsContainer");
+  const warnList = document.getElementById("batchWarningsList");
+  if (warnContainer && warnList) {
+    if (batch.warnings && batch.warnings.length > 0) {
+      warnList.innerHTML = batch.warnings.map(w => `<li>${w}</li>`).join("");
+      warnContainer.classList.remove("hidden");
+    } else {
+      warnContainer.classList.add("hidden");
+    }
+  }
+
+  // Invoices table
+  const tbody = document.getElementById("batchInvoicesTableBody");
+  if (tbody) {
+    if (!batch.invoices || batch.invoices.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-500">لم يتم استخراج أي فواتير</td></tr>`;
+    } else {
+      tbody.innerHTML = batch.invoices.map(inv => {
+        const isSale = inv.type === "SALE";
+        const isVerified = inv.status === "PROCESSED";
+        const typeBadge = isSale 
+          ? `<span class="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded text-[11px] font-semibold">مبيعات</span>`
+          : (inv.type === "PURCHASE" 
+              ? `<span class="bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded text-[11px] font-semibold">مشتريات مورد</span>`
+              : `<span class="bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded text-[11px] font-semibold">مصروف</span>`);
+
+        const statusBadge = isVerified
+          ? `<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px]">مطابقة ✅</span>`
+          : `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px]">مراجعة ⚠️</span>`;
+
+        return `
+          <tr class="hover:bg-slate-800/40 transition">
+            <td class="p-2.5 text-slate-400">صفحة ${inv.page_number}</td>
+            <td class="p-2.5 font-bold text-slate-200">${inv.invoice_number || "-"}</td>
+            <td class="p-2.5">${typeBadge}</td>
+            <td class="p-2.5 text-slate-300">${inv.merchant_or_supplier || "-"}</td>
+            <td class="p-2.5 font-bold text-slate-100">${Number(inv.total_amount).toFixed(3)}</td>
+            <td class="p-2.5 text-sky-400">${Number(inv.tax_amount).toFixed(3)}</td>
+            <td class="p-2.5 text-center">${statusBadge}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+}
+
 // Handler for quick manual approval of reviewed transactions
 window.approveTransaction = async function(txId) {
   const btn = document.getElementById(`approve-btn-${txId}`);
@@ -620,12 +727,22 @@ function setupUploadForm() {
       const result = await res.json();
       if (!res.ok) throw new Error(result.detail || "فشل معالجة المستند");
 
-      feedback.className = "mt-4 p-4 rounded-xl text-xs bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 block";
-      feedback.innerHTML = `
-        <div class="font-bold text-sm mb-1">✅ ${result.message}</div>
-        <div>نوع العملية: <strong>${result.extracted_summary.type}</strong> | القيمة المسجلة: <strong>${Number(result.extracted_summary.total_amount).toFixed(3)} د.أ</strong></div>
-        <div class="mt-1">حالة الاعتماد: <span class="bg-emerald-500/20 px-2 py-0.5 rounded font-semibold">${result.validation_status}</span></div>
-      `;
+      if (result.is_batch && result.batch_summary) {
+        showBatchSummaryModal(result.batch_summary);
+        feedback.className = "mt-4 p-4 rounded-xl text-xs bg-purple-950/40 border border-purple-500/30 text-purple-300 block";
+        feedback.innerHTML = `
+          <div class="font-bold text-sm mb-1">📑 ${result.message}</div>
+          <div>تم استخراج <strong>${result.batch_summary.total_invoices}</strong> فاتورة مستقلة | إجمالي المبيعات: <strong>${Number(result.batch_summary.total_sales_amount).toFixed(3)} د.أ</strong> | إجمالي المشتريات: <strong>${Number(result.batch_summary.total_purchases_amount).toFixed(3)} د.أ</strong></div>
+          <div class="mt-1">حالة الحزمة: <span class="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-semibold">${result.batch_summary.approved_count} معتمدة</span> | <span class="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-semibold">${result.batch_summary.needs_review_count} بحاجة لمراجعة</span></div>
+        `;
+      } else {
+        feedback.className = "mt-4 p-4 rounded-xl text-xs bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 block";
+        feedback.innerHTML = `
+          <div class="font-bold text-sm mb-1">✅ ${result.message}</div>
+          <div>نوع العملية: <strong>${result.extracted_summary.type}</strong> | القيمة المسجلة: <strong>${Number(result.extracted_summary.total_amount).toFixed(3)} د.أ</strong></div>
+          <div class="mt-1">حالة الاعتماد: <span class="bg-emerald-500/20 px-2 py-0.5 rounded font-semibold">${result.validation_status}</span></div>
+        `;
+      }
 
       fileInput.value = "";
       textInput.value = "";
