@@ -36,13 +36,22 @@ class TelegramBotRunner:
         'ديسمبر': 12
     }
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, org_id: Optional[str] = None, token: Optional[str] = None):
+        self.org_id = org_id
         self.token = token or settings.TELEGRAM_BOT_TOKEN
         self.base_url = f"https://149.154.166.110/bot{self.token}"
         self.file_base_url = f"https://149.154.166.110/file/bot{self.token}"
         self.headers = {"Host": "api.telegram.org"}
         self.offset = 0
         self.is_running = False
+
+    def _get_org(self, db: Session) -> Optional[Organization]:
+        """استرجاع المنشأة التابع لها هذا البوت حصراً لضمان عزل البيانات 100%"""
+        if self.org_id:
+            org = db.query(Organization).filter(Organization.id == self.org_id).first()
+            if org:
+                return org
+        return db.query(Organization).first()
 
     def get_main_keyboard(self) -> dict:
         """لوحة الأزرار السريعة الثابتة أسفل شاشة تيليجرام للتسهيل على العملاء"""
@@ -193,7 +202,7 @@ class TelegramBotRunner:
         from app.services.jofotara_service import JoFotaraService
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if not org:
                 await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
                 return
@@ -254,7 +263,7 @@ class TelegramBotRunner:
 
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if not org:
                 await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
                 return
@@ -306,7 +315,7 @@ class TelegramBotRunner:
     def _update_org_chat_id(self, chat_id: int):
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if org and str(org.telegram_chat_id) != str(chat_id):
                 org.telegram_chat_id = str(chat_id)
                 db.commit()
@@ -318,7 +327,7 @@ class TelegramBotRunner:
     def _get_business_context(self) -> Optional[Dict[str, Any]]:
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if org:
                 branches = [b.name for b in org.branches] if org.branches else []
                 return {
@@ -592,7 +601,7 @@ class TelegramBotRunner:
 
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if not org:
                 await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة بعد.")
                 return
@@ -644,7 +653,7 @@ class TelegramBotRunner:
 
         db = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if not org:
                 await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
                 return
@@ -773,7 +782,7 @@ class TelegramBotRunner:
         if text_clean in ["/audit", "تنبيهات", "تنبيهات التدقيق", "⚠️ تنبيهات التدقيق", "فحص"]:
             db = SessionLocal()
             try:
-                org = db.query(Organization).first()
+                org = self._get_org(db)
                 if org:
                     flags = db.query(AuditFlag).filter(AuditFlag.organization_id == org.id, AuditFlag.resolved == False).all()
                     if not flags:
@@ -832,7 +841,7 @@ class TelegramBotRunner:
         
         db: Session = SessionLocal()
         try:
-            org = db.query(Organization).first()
+            org = self._get_org(db)
             if not org:
                 org = Organization(name="المؤسسة التجارية", currency="JOD")
                 db.add(org)
@@ -944,7 +953,7 @@ class TelegramBotRunner:
 
                 db = SessionLocal()
                 try:
-                    org = db.query(Organization).first()
+                    org = self._get_org(db)
                     if not org or not org.telegram_chat_id or not org.auto_daily_brief_enabled:
                         continue
 
@@ -1030,3 +1039,56 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+class MultiBotManager:
+    """
+    مدير تشغيل البوتات المتعددة (Multi-Tenant Bot Manager):
+    يتيح تشغيل وإدارة بوت تيليجرام مستقل لكل نشاط تجاري في نفس الوقت،
+    مع عزل كامل للفواتير والعمليات والتقارير والجدولة الصباحية لكل منشأة.
+    """
+    def __init__(self):
+        self.runners: Dict[str, TelegramBotRunner] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+
+    async def start_all_bots(self):
+        db = SessionLocal()
+        try:
+            orgs = db.query(Organization).filter(Organization.is_active == True).all()
+            started_count = 0
+            for org in orgs:
+                token = org.telegram_bot_token or (settings.TELEGRAM_BOT_TOKEN if len(orgs) == 1 else None)
+                if token:
+                    self.start_bot(org.id, token)
+                    started_count += 1
+            
+            if started_count == 0 and settings.TELEGRAM_BOT_TOKEN:
+                first_org = orgs[0] if orgs else None
+                if first_org:
+                    self.start_bot(first_org.id, settings.TELEGRAM_BOT_TOKEN)
+        finally:
+            db.close()
+
+    def start_bot(self, org_id: str, token: str):
+        if org_id in self.runners:
+            self.stop_bot(org_id)
+        runner = TelegramBotRunner(org_id=org_id, token=token)
+        self.runners[org_id] = runner
+        task = asyncio.create_task(runner.start_polling())
+        self.tasks[org_id] = task
+        print(f"[MultiBotManager] Started dedicated bot for organization {org_id}", flush=True)
+
+    def stop_bot(self, org_id: str):
+        if org_id in self.runners:
+            self.runners[org_id].is_running = False
+            del self.runners[org_id]
+        if org_id in self.tasks:
+            self.tasks[org_id].cancel()
+            del self.tasks[org_id]
+            print(f"[MultiBotManager] Stopped bot for organization {org_id}", flush=True)
+
+    def start_or_reload_bot(self, org_id: str, token: str):
+        self.start_bot(org_id, token)
+
+
+multi_bot_manager = MultiBotManager()

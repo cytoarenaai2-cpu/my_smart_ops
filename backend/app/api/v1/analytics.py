@@ -3,12 +3,13 @@ from typing import Optional, Dict, Any, List
 import io
 import csv
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query, HTTPException, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, Response, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
 from app.core.database import get_db
-from app.models.schema import Organization, Branch, Transaction, AuditFlag, Document, TransactionItem
+from app.models.schema import Organization, Branch, Transaction, AuditFlag, Document, TransactionItem, User
+from app.core.security import get_optional_current_user, resolve_tenant_org_id, UserRoleEnum
 from app.services.daily_summary import DailySummaryService
 
 class TransactionUpdatePayload(BaseModel):
@@ -31,22 +32,25 @@ class OrganizationProfilePayload(BaseModel):
     auto_daily_brief_enabled: Optional[bool] = True
     daily_brief_time: Optional[str] = "08:30"
 
+class BriefingSchedulePayload(BaseModel):
+    auto_daily_brief_enabled: bool = True
+    daily_brief_time: str = "08:30"
+
 router = APIRouter(prefix="/analytics", tags=["Analytics & Reporting"])
 
 @router.get("/daily-brief")
 def get_daily_morning_brief(
     organization_id: Optional[str] = Query(None),
     target_date: Optional[date] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    إرجاع ملخص الصباح التنفيذي الحقيقي للعمليات المسجلة.
+    إرجاع ملخص الصباح التنفيذي الحقيقي للعمليات المسجلة مع عزل المنشآت.
     """
+    organization_id = resolve_tenant_org_id(current_user, organization_id, db)
     if not organization_id:
-        org = db.query(Organization).first()
-        if not org:
-            raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة مسجلة.")
-        organization_id = org.id
+        raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة مسجلة.")
 
     chosen_date = target_date or date.today()
     return DailySummaryService.generate_morning_brief(db, organization_id, chosen_date)
@@ -56,16 +60,15 @@ def get_daily_morning_brief(
 def get_dashboard_summary(
     organization_id: Optional[str] = Query(None),
     days: int = Query(30, ge=1, le=90),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    تغذية لوحة التحكم التنفيذية بمخططات الأداء الحقيقية فقط.
+    تغذية لوحة التحكم التنفيذية بمخططات الأداء الحقيقية مع عزل المنشآت.
     """
+    organization_id = resolve_tenant_org_id(current_user, organization_id, db)
     if not organization_id:
-        org = db.query(Organization).first()
-        if not org:
-            raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
-        organization_id = org.id
+        raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
 
     start_date = date.today() - timedelta(days=days)
 
@@ -135,16 +138,15 @@ def get_recent_transactions(
     status: Optional[str] = Query(None),
     days: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    سجل العمليات الفعلي المباشر - يدعم الفلترة والبحث المتقدم بالفرع والتاريخ والنوع والحالة.
+    سجل العمليات الفعلي المباشر مع عزل المنشآت الصارم.
     """
+    organization_id = resolve_tenant_org_id(current_user, organization_id, db)
     if not organization_id:
-        org = db.query(Organization).first()
-        if not org:
-            return []
-        organization_id = org.id
+        return []
 
     query = db.query(Transaction).filter(Transaction.organization_id == organization_id)
 
@@ -442,11 +444,16 @@ def reset_all_data(db: Session = Depends(get_db)):
 
 
 @router.get("/organization-profile")
-def get_organization_profile(db: Session = Depends(get_db)):
+def get_organization_profile(
+    organization_id: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    جلب بيانات هوية المنشأة والنشاط التجاري والفروع.
+    جلب بيانات هوية المنشأة والنشاط التجاري والفروع مع عزل الصلاحيات.
     """
-    org = db.query(Organization).first()
+    target_org_id = resolve_tenant_org_id(current_user, organization_id, db)
+    org = db.query(Organization).filter(Organization.id == target_org_id).first() if target_org_id else db.query(Organization).first()
     if not org:
         org = Organization(name="المؤسسة التجارية", industry_type="مطاعم ومقاهي", currency="JOD")
         db.add(org)
@@ -460,6 +467,8 @@ def get_organization_profile(db: Session = Depends(get_db)):
         db.commit()
         branches = [main_b]
 
+    is_super = bool(current_user and current_user.role == UserRoleEnum.SUPER_ADMIN)
+
     return {
         "id": org.id,
         "name": org.name,
@@ -468,60 +477,83 @@ def get_organization_profile(db: Session = Depends(get_db)):
         "currency": org.currency or "JOD",
         "branches": [b.name for b in branches],
         "telegram_chat_id": org.telegram_chat_id or "",
+        "has_dedicated_bot": bool(org.telegram_bot_token),
         "auto_daily_brief_enabled": org.auto_daily_brief_enabled if org.auto_daily_brief_enabled is not None else True,
-        "daily_brief_time": org.daily_brief_time or "08:30"
+        "daily_brief_time": org.daily_brief_time or "08:30",
+        "is_locked_for_user": not is_super
     }
 
 
 @router.put("/organization-profile")
 def update_organization_profile(
     payload: OrganizationProfilePayload,
+    organization_id: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    تحديث هوية المنشأة ونوع النشاط التجاري وإدارة الفروع وتفضيلات الجدولة.
+    تحديث هوية المنشأة:
+    - محمي ومقفل: لا يستطيع مدير المنشأة العادي تعديل الاسم، النشاط، الرقم الضريبي، أو الفروع.
+    - يسمح فقط لمدير المنشأة بتعديل الجدولة الصباحية.
+    - مالك المنصة (Super Admin) هو الوحيد المخول بتعديل كافة الحقول.
     """
-    org = db.query(Organization).first()
+    target_org_id = resolve_tenant_org_id(current_user, organization_id, db)
+    org = db.query(Organization).filter(Organization.id == target_org_id).first() if target_org_id else db.query(Organization).first()
     if not org:
-        org = Organization(name=payload.name.strip(), industry_type=payload.industry_type, currency="JOD")
-        db.add(org)
-        db.commit()
-        db.refresh(org)
-    else:
-        org.name = payload.name.strip()
+        raise HTTPException(status_code=404, detail="لم يتم العثور على المنشأة.")
+
+    is_super = bool(current_user and current_user.role == UserRoleEnum.SUPER_ADMIN)
+
+    if current_user and not is_super:
+        has_name_change = payload.name and payload.name.strip() != org.name
+        has_industry_change = payload.industry_type and payload.industry_type.strip() != (org.industry_type or "")
+        current_tin = (org.tax_number or "").strip()
+        new_tin = (payload.tax_number or "").strip()
+        has_tax_change = payload.tax_number is not None and new_tin != current_tin
+        
+        current_branches = {b.name.strip() for b in org.branches}
+        new_branches = {b.strip() for b in (payload.branches or []) if b.strip()}
+        has_branch_change = payload.branches is not None and current_branches != new_branches
+
+        if has_name_change or has_industry_change or has_tax_change or has_branch_change:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="عذراً، تعديل اسم المنشأة ونوع النشاط والرقم الضريبي وإدارة الفروع محصور بمالك المنصة (Super Admin) فقط. يمكنك فقط تعديل الجدولة الصباحية."
+            )
+
+    if is_super:
+        if payload.name:
+            org.name = payload.name.strip()
         if payload.industry_type:
             org.industry_type = payload.industry_type.strip()
         if payload.tax_number is not None:
             org.tax_number = payload.tax_number.strip() or None
-        if payload.auto_daily_brief_enabled is not None:
-            org.auto_daily_brief_enabled = payload.auto_daily_brief_enabled
-        if payload.daily_brief_time is not None:
-            org.daily_brief_time = payload.daily_brief_time.strip()
-        db.commit()
+            org.is_tax_registered = bool(org.tax_number)
 
-    # تحديث الفروع
-    if payload.branches is not None:
-        existing_branches = db.query(Branch).filter(Branch.organization_id == org.id).all()
-        existing_names = {b.name for b in existing_branches}
-        target_names = {b.strip() for b in payload.branches if b.strip()}
-        
-        # حذف الفروع غير الموجودة في القائمة الجديدة
-        for b in existing_branches:
-            if b.name not in target_names:
-                db.delete(b)
-        
-        # إضافة الفروع الجديدة
-        for name in target_names:
-            if name not in existing_names:
-                db.add(Branch(organization_id=org.id, name=name))
-                
-        db.commit()
+        if payload.branches is not None:
+            existing_branches = db.query(Branch).filter(Branch.organization_id == org.id).all()
+            existing_names = {b.name.strip() for b in existing_branches}
+            target_names = {b.strip() for b in payload.branches if b.strip()}
+            for b in existing_branches:
+                if b.name.strip() not in target_names:
+                    db.delete(b)
+            for name in target_names:
+                if name not in existing_names:
+                    db.add(Branch(organization_id=org.id, name=name))
+
+    if payload.auto_daily_brief_enabled is not None:
+        org.auto_daily_brief_enabled = payload.auto_daily_brief_enabled
+    if payload.daily_brief_time is not None:
+        org.daily_brief_time = payload.daily_brief_time.strip()
+
+    db.commit()
+    db.refresh(org)
 
     branches = db.query(Branch).filter(Branch.organization_id == org.id).all()
 
     return {
         "success": True,
-        "message": "تم تحديث هوية النشاط التجاري والفروع والجدولة الصباحية بنجاح.",
+        "message": "تم حفظ الإعدادات بنجاح.",
         "profile": {
             "id": org.id,
             "name": org.name,
@@ -529,7 +561,35 @@ def update_organization_profile(
             "tax_number": org.tax_number or "",
             "branches": [b.name for b in branches],
             "telegram_chat_id": org.telegram_chat_id or "",
-            "auto_daily_brief_enabled": org.auto_daily_brief_enabled if org.auto_daily_brief_enabled is not None else True,
-            "daily_brief_time": org.daily_brief_time or "08:30"
+            "auto_daily_brief_enabled": org.auto_daily_brief_enabled,
+            "daily_brief_time": org.daily_brief_time or "08:30",
+            "is_locked_for_user": not is_super
         }
+    }
+
+
+@router.put("/briefing-schedule")
+def update_briefing_schedule(
+    payload: BriefingSchedulePayload,
+    organization_id: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    نقطة مخصصة لمدير المنشأة لضبط الجدولة الآلية للتقرير الصباحي وموعده بحرية تامة في أي وقت.
+    """
+    target_org_id = resolve_tenant_org_id(current_user, organization_id, db)
+    org = db.query(Organization).filter(Organization.id == target_org_id).first() if target_org_id else db.query(Organization).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="لم يتم العثور على المنشأة.")
+
+    org.auto_daily_brief_enabled = payload.auto_daily_brief_enabled
+    org.daily_brief_time = payload.daily_brief_time.strip()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"تم تحديث الجدولة الصباحية بنجاح إلى الساعة {org.daily_brief_time}.",
+        "auto_daily_brief_enabled": org.auto_daily_brief_enabled,
+        "daily_brief_time": org.daily_brief_time
     }

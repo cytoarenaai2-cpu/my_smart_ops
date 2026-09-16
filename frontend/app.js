@@ -3,6 +3,10 @@ let paymentChartInstance = null;
 let cachedTransactions = [];
 let currentOrgData = null;
 let currentOrgBranches = [];
+let currentToken = localStorage.getItem("smart_ops_token") || null;
+let currentUser = null;
+let selectedTenantOrgId = null;
+let platformOrgsList = [];
 
 const INDUSTRY_LABELS = {
   "restaurant": "مطاعم وكافيهات",
@@ -15,9 +19,256 @@ const INDUSTRY_LABELS = {
   "other": "نشاط تجاري عام"
 };
 
+function getAuthHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  if (currentToken) {
+    headers["Authorization"] = `Bearer ${currentToken}`;
+  }
+  return headers;
+}
+
+async function authFetch(url, options = {}) {
+  const opts = { ...options };
+  opts.headers = getAuthHeaders(opts.headers || {});
+
+  // Append organization_id if Super Admin selected a tenant
+  if (currentUser && currentUser.role === "SUPER_ADMIN" && selectedTenantOrgId) {
+    const sep = url.includes("?") ? "&" : "?";
+    if (!url.includes("organization_id=") && !url.includes("/api/v1/auth") && !url.includes("/api/v1/admin")) {
+      url = `${url}${sep}organization_id=${encodeURIComponent(selectedTenantOrgId)}`;
+    }
+  }
+
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    console.warn("Session expired or unauthorized (401). Redirecting to login.");
+    currentToken = null;
+    currentUser = null;
+    localStorage.removeItem("smart_ops_token");
+    openLoginModal();
+    throw new Error("انتهت جلسة العمل، يرجى تسجيل الدخول مجدداً");
+  }
+  return res;
+}
+
+function openLoginModal() {
+  const modal = document.getElementById("loginModal");
+  if (modal) {
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+function closeLoginModal() {
+  const modal = document.getElementById("loginModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+}
+
+window.fillDemoLogin = (username, password) => {
+  const u = document.getElementById("loginUsernameInput");
+  const p = document.getElementById("loginPasswordInput");
+  if (u) u.value = username;
+  if (p) p.value = password;
+  const btn = document.getElementById("submitLoginBtn");
+  if (btn) btn.click();
+};
+
+function setupAuthSystem() {
+  const form = document.getElementById("loginForm");
+  if (form) {
+    form.addEventListener("submit", handleLoginSubmit);
+  }
+
+  const togglePassBtn = document.getElementById("toggleLoginPasswordBtn");
+  if (togglePassBtn) {
+    togglePassBtn.addEventListener("click", () => {
+      const inp = document.getElementById("loginPasswordInput");
+      if (inp) {
+        inp.type = inp.type === "password" ? "text" : "password";
+      }
+    });
+  }
+
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", handleLogout);
+  }
+
+  const superAdminOrgSelect = document.getElementById("superAdminOrgSelect");
+  if (superAdminOrgSelect) {
+    superAdminOrgSelect.addEventListener("change", (e) => {
+      selectedTenantOrgId = e.target.value || null;
+      fetchAllData();
+    });
+  }
+}
+
+async function handleLoginSubmit(e) {
+  e.preventDefault();
+  const uInput = document.getElementById("loginUsernameInput");
+  const pInput = document.getElementById("loginPasswordInput");
+  const errAlert = document.getElementById("loginErrorAlert");
+  const submitBtn = document.getElementById("submitLoginBtn");
+
+  if (errAlert) {
+    errAlert.classList.add("hidden");
+    errAlert.textContent = "";
+  }
+
+  const originalHtml = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<span>جاري التحقق والدخول...</span>`;
+
+  try {
+    const formData = new URLSearchParams();
+    formData.append("username", uInput.value.trim());
+    formData.append("password", pInput.value.trim());
+
+    const res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString()
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "اسم المستخدم أو كلمة المرور غير صحيحة");
+    }
+
+    const data = await res.json();
+    currentToken = data.access_token;
+    localStorage.setItem("smart_ops_token", currentToken);
+
+    closeLoginModal();
+    await initAuthenticatedUser();
+  } catch (err) {
+    if (errAlert) {
+      errAlert.textContent = err.message;
+      errAlert.classList.remove("hidden");
+    }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = originalHtml;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+function handleLogout() {
+  currentToken = null;
+  currentUser = null;
+  selectedTenantOrgId = null;
+  localStorage.removeItem("smart_ops_token");
+  openLoginModal();
+}
+
+async function initAuthenticatedUser() {
+  if (!currentToken) {
+    openLoginModal();
+    return false;
+  }
+  try {
+    const res = await fetch("/api/v1/auth/me", {
+      headers: { "Authorization": `Bearer ${currentToken}` }
+    });
+    if (!res.ok) {
+      throw new Error("Invalid token");
+    }
+    currentUser = await res.json();
+    updateHeaderUserUI();
+    await fetchAllData();
+    return true;
+  } catch (err) {
+    console.warn("initAuthenticatedUser failed:", err);
+    currentToken = null;
+    currentUser = null;
+    localStorage.removeItem("smart_ops_token");
+    openLoginModal();
+    return false;
+  }
+}
+
+function updateHeaderUserUI() {
+  if (!currentUser) return;
+
+  const nameLabel = document.getElementById("headerUserName");
+  if (nameLabel) {
+    nameLabel.textContent = currentUser.full_name || currentUser.username;
+  }
+
+  const roleBadge = document.getElementById("headerUserRoleBadge");
+  if (roleBadge) {
+    const roleMap = {
+      "SUPER_ADMIN": { label: "👑 مالك المنصة", class: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
+      "ORG_ADMIN": { label: "🏢 مدير المنشأة", class: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
+      "ACCOUNTANT": { label: "📊 محاسب قانوني", class: "bg-sky-500/20 text-sky-300 border-sky-500/30" },
+      "CASHIER": { label: "🛒 كاشير فروع", class: "bg-amber-500/20 text-amber-300 border-amber-500/30" }
+    };
+    const meta = roleMap[currentUser.role] || { label: currentUser.role, class: "bg-slate-700 text-slate-300 border-slate-600" };
+    roleBadge.textContent = meta.label;
+    roleBadge.className = `px-1.5 py-0.2 rounded text-[10px] font-bold border ${meta.class}`;
+  }
+
+  // RBAC UI visibility
+  const taxBtn = document.getElementById("openTaxReportBtn");
+  const resetBtn = document.getElementById("resetDataBtn");
+
+  if (currentUser.role === "CASHIER") {
+    if (taxBtn) taxBtn.classList.add("hidden");
+    if (resetBtn) resetBtn.classList.add("hidden");
+  } else {
+    if (taxBtn) taxBtn.classList.remove("hidden");
+    if (resetBtn) {
+      if (currentUser.role === "SUPER_ADMIN" || currentUser.role === "ORG_ADMIN") {
+        resetBtn.classList.remove("hidden");
+      } else {
+        resetBtn.classList.add("hidden");
+      }
+    }
+  }
+
+  // Super Admin controls
+  const switcher = document.getElementById("superAdminOrgSwitcher");
+  if (currentUser.role === "SUPER_ADMIN") {
+    if (switcher) switcher.classList.remove("hidden");
+    loadPlatformOrganizations();
+  } else {
+    if (switcher) switcher.classList.add("hidden");
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function loadPlatformOrganizations() {
+  try {
+    const res = await authFetch("/api/v1/admin/organizations");
+    if (!res.ok) return;
+    platformOrgsList = await res.json();
+
+    const select = document.getElementById("superAdminOrgSelect");
+    if (select) {
+      select.innerHTML = `<option value="">🏢 كافة المنشآت (تلقائي)</option>` +
+        platformOrgsList.map(o => `<option value="${o.id}" ${o.id === selectedTenantOrgId ? 'selected' : ''}>${o.name} (${o.tax_number || 'بدون ضريبي'})</option>`).join("");
+    }
+
+    const userOrgSelect = document.getElementById("newUserOrgSelect");
+    if (userOrgSelect) {
+      userOrgSelect.innerHTML = `<option value="">بدون منشأة (لمالك المنصة فقط)</option>` +
+        platformOrgsList.map(o => `<option value="${o.id}">${o.name}</option>`).join("");
+    }
+  } catch (err) {
+    console.error("loadPlatformOrganizations error:", err);
+  }
+}
+
+
 // Initial Load
-document.addEventListener("DOMContentLoaded", () => {
-  fetchAllData();
+document.addEventListener("DOMContentLoaded", async () => {
+  setupAuthSystem();
+  setupSuperAdminModal();
   setupOrgSettingsModal();
   setupTransactionFilters();
   setupUploadForm();
@@ -36,6 +287,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (refreshBtnMobile) {
     refreshBtnMobile.addEventListener("click", () => fetchAllData());
   }
+
+  // Initialize Auth
+  await initAuthenticatedUser();
 });
 
 async function fetchAllData() {
@@ -50,7 +304,7 @@ async function fetchAllData() {
 // 1. Fetch dashboard metrics
 async function fetchDashboardData() {
   try {
-    const res = await fetch("/api/v1/analytics/dashboard-summary?days=30");
+    const res = await authFetch("/api/v1/analytics/dashboard-summary?days=30");
     if (!res.ok) throw new Error("فشل جلب بيانات لوحة التحكم");
     const data = await res.json();
 
@@ -65,13 +319,13 @@ async function fetchDashboardData() {
 // 2. Fetch Phase 2 Tax & JoFotara Data
 async function fetchTaxData() {
   try {
-    const sumRes = await fetch("/api/v1/tax/summary?days=30");
+    const sumRes = await authFetch("/api/v1/tax/summary?days=30");
     if (sumRes.ok) {
       const sumData = await sumRes.json();
       renderTaxPanel(sumData.tax_position);
     }
 
-    const riskRes = await fetch("/api/v1/tax/risk-invoices");
+    const riskRes = await authFetch("/api/v1/tax/risk-invoices");
     if (riskRes.ok) {
       const riskData = await riskRes.json();
       renderRiskInvoices(riskData);
@@ -117,7 +371,7 @@ function getFilterQueryParams() {
 async function fetchRecentTransactions() {
   try {
     const qs = getFilterQueryParams();
-    const res = await fetch(`/api/v1/analytics/recent-transactions?${qs}`);
+    const res = await authFetch(`/api/v1/analytics/recent-transactions?${qs}`);
     if (!res.ok) throw new Error("فشل جلب سجل العمليات");
     const txs = await res.json();
     cachedTransactions = txs;
@@ -169,6 +423,7 @@ async function fetchRecentTransactions() {
       }
 
       let actionHtml = '';
+      const isCashier = Boolean(currentUser && currentUser.role === 'CASHIER');
       if (!isApproved) {
         actionHtml = `
           <div class="flex items-center justify-center gap-1.5 flex-nowrap">
@@ -177,6 +432,7 @@ async function fetchRecentTransactions() {
                     class="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
               <i data-lucide="qr-code" class="w-3.5 h-3.5 pointer-events-none"></i>
             </button>
+            ${!isCashier ? `
             <button onclick="window.openReviewModal('${t.id}')" 
                     title="مراجعة وتعديل المبالغ وإدخال البيانات الناقصة"
                     class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 hover:border-amber-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
@@ -189,7 +445,7 @@ async function fetchRecentTransactions() {
                     class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
               <i data-lucide="check" class="w-3.5 h-3.5 pointer-events-none"></i>
               <span class="pointer-events-none">اعتماد</span>
-            </button>
+            </button>` : ''}
           </div>
         `;
       } else {
@@ -204,11 +460,12 @@ async function fetchRecentTransactions() {
                     class="p-1 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
               <i data-lucide="qr-code" class="w-3.5 h-3.5 pointer-events-none"></i>
             </button>
+            ${!isCashier ? `
             <button onclick="window.openReviewModal('${t.id}')"
                     title="تعديل بيانات هذه العملية"
                     class="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 transition cursor-pointer active:scale-95">
               <i data-lucide="edit-2" class="w-3.5 h-3.5 pointer-events-none"></i>
-            </button>
+            </button>` : ''}
           </div>
         `;
       }
@@ -245,7 +502,7 @@ window.openReviewModal = async function(txId) {
   let t = cachedTransactions.find(x => String(x.id) === String(txId));
   if (!t) {
     try {
-      const res = await fetch(`/api/v1/analytics/recent-transactions`);
+      const res = await authFetch(`/api/v1/analytics/recent-transactions`);
       if (res.ok) {
         cachedTransactions = await res.json();
         t = cachedTransactions.find(x => String(x.id) === String(txId));
@@ -379,7 +636,7 @@ function setupReviewModal() {
       };
 
       try {
-        const res = await fetch(`/api/v1/analytics/transactions/${txId}`, {
+        const res = await authFetch(`/api/v1/analytics/transactions/${txId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -582,8 +839,8 @@ window.openJoFotaraModal = async function(txId) {
 
   try {
     const [qrRes, payloadRes] = await Promise.all([
-      fetch(`/api/v1/tax/transactions/${txId}/jofotara-qr`),
-      fetch(`/api/v1/tax/transactions/${txId}/jofotara-payload`)
+      authFetch(`/api/v1/tax/transactions/${txId}/jofotara-qr`),
+      authFetch(`/api/v1/tax/transactions/${txId}/jofotara-payload`)
     ]);
 
     if (!qrRes.ok) throw new Error("تعذر جلب بيانات JoFotara للعملية");
@@ -736,7 +993,7 @@ window.approveTransaction = async function(txId) {
   }
 
   try {
-    const res = await fetch(`/api/v1/analytics/transactions/${txId}/approve`, {
+    const res = await authFetch(`/api/v1/analytics/transactions/${txId}/approve`, {
       method: "POST"
     });
     if (!res.ok) {
@@ -1000,7 +1257,7 @@ function setupUploadForm() {
     feedback.textContent = "⏳ جاري قراءة وتدقيق أرقام المستند الحقيقية...";
 
     try {
-      const res = await fetch("/api/v1/documents/upload", { method: "POST", body: formData });
+      const res = await authFetch("/api/v1/documents/upload", { method: "POST", body: formData });
       const result = await res.json();
       if (!res.ok) throw new Error(result.detail || "فشل معالجة المستند");
 
@@ -1043,7 +1300,7 @@ function setupBriefButton() {
   const btn = document.getElementById("copyBriefBtn");
   btn.addEventListener("click", async () => {
     try {
-      const res = await fetch("/api/v1/analytics/daily-brief");
+      const res = await authFetch("/api/v1/analytics/daily-brief");
       if (!res.ok) throw new Error("فشل استخراج التقرير");
       const data = await res.json();
 
@@ -1066,7 +1323,7 @@ function setupResetButton() {
     }
 
     try {
-      const res = await fetch("/api/v1/analytics/reset-data", { method: "POST" });
+      const res = await authFetch("/api/v1/analytics/reset-data", { method: "POST" });
       const data = await res.json();
       alert(data.message);
       fetchAllData();
@@ -1107,7 +1364,7 @@ function setupTaxModal() {
         ? "/api/v1/tax/pre-filing-report?all_time=true" 
         : `/api/v1/tax/pre-filing-report?days=${period}`;
       
-      const res = await fetch(url);
+      const res = await authFetch(url);
       if (!res.ok) throw new Error("فشل جلب تقرير الإقرار");
       const r = await res.json();
 
@@ -1282,7 +1539,7 @@ function setupTaxModal() {
   closeBtn1.addEventListener("click", closeModal);
   closeBtn2.addEventListener("click", closeModal);
 
-  printBtn.addEventListener("click", () => {
+  printBtn.addEventListener("click", async () => {
     const originalContent = printBtn.innerHTML;
     try {
       printBtn.disabled = true;
@@ -1294,12 +1551,22 @@ function setupTaxModal() {
         <span>جاري تنزيل ملف PDF...</span>
       `;
 
-      const pdfUrl = currentTaxPeriod === "all"
+      let pdfUrl = currentTaxPeriod === "all"
         ? "/api/v1/tax/pre-filing-report/pdf?all_time=true"
         : `/api/v1/tax/pre-filing-report/pdf?days=${currentTaxPeriod}`;
 
-      // تنزيل الملف مباشرة على جهاز المستخدم
-      window.location.href = pdfUrl;
+      const res = await authFetch(pdfUrl);
+      if (!res.ok) throw new Error("فشل تنزيل ملف الـ PDF");
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = blobUrl;
+      const orgNameSafe = currentOrgData && currentOrgData.name ? currentOrgData.name.replace(/\s+/g, '_') : 'org';
+      downloadLink.download = `tax_return_report_${orgNameSafe}.pdf`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
       alert("حدث خطأ أثناء تحميل ملف PDF: " + err.message);
     } finally {
@@ -1307,7 +1574,7 @@ function setupTaxModal() {
         printBtn.disabled = false;
         printBtn.innerHTML = originalContent;
         if (window.lucide) lucide.createIcons();
-      }, 2000);
+      }, 1000);
     }
   });
 }
@@ -1374,7 +1641,7 @@ function setupTransactionFilters() {
 
 async function fetchOrgProfile() {
   try {
-    const res = await fetch("/api/v1/analytics/organization-profile");
+    const res = await authFetch("/api/v1/analytics/organization-profile");
     if (!res.ok) return;
     const data = await res.json();
     currentOrgData = data;
@@ -1412,6 +1679,11 @@ function setupOrgSettingsModal() {
   const chipsContainer = document.getElementById("branchesChipsContainer");
   const alertBox = document.getElementById("orgModalAlert");
 
+  const lockNotice = document.getElementById("orgLockNotice");
+  const nameInput = document.getElementById("orgNameInput");
+  const industryInput = document.getElementById("orgIndustryInput");
+  const taxInput = document.getElementById("orgTaxInput");
+
   if (!modal) return;
 
   const renderChips = () => {
@@ -1420,25 +1692,31 @@ function setupOrgSettingsModal() {
       chipsContainer.innerHTML = `<span class="text-slate-500 text-[11px] italic">لم يتم إضافة فروع منفصلة بعد (سيتم اعتماد الفرع الرئيسي تلقائياً).</span>`;
       return;
     }
+    const isSuper = Boolean(currentUser && currentUser.role === "SUPER_ADMIN");
     chipsContainer.innerHTML = currentOrgBranches.map((b, idx) => `
       <span class="inline-flex items-center gap-1.5 bg-indigo-950/80 border border-indigo-500/30 text-indigo-200 px-2.5 py-1 rounded-lg text-xs font-medium">
         <span>${b}</span>
-        <button type="button" data-index="${idx}" class="remove-branch-btn text-indigo-400 hover:text-rose-400 hover:bg-slate-800 rounded p-0.5 transition" title="حذف الفرع">
+        ${isSuper ? `
+        <button type="button" data-index="${idx}" class="remove-branch-btn text-indigo-400 hover:text-rose-400 hover:bg-slate-800 rounded p-0.5 transition cursor-pointer" title="حذف الفرع">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-        </button>
+        </button>` : ''}
       </span>
     `).join("");
 
-    chipsContainer.querySelectorAll(".remove-branch-btn").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        const idx = parseInt(btn.getAttribute("data-index"), 10);
-        currentOrgBranches.splice(idx, 1);
-        renderChips();
+    if (isSuper) {
+      chipsContainer.querySelectorAll(".remove-branch-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          const idx = parseInt(btn.getAttribute("data-index"), 10);
+          currentOrgBranches.splice(idx, 1);
+          renderChips();
+        });
       });
-    });
+    }
   };
 
   const addBranch = () => {
+    const isSuper = Boolean(currentUser && currentUser.role === "SUPER_ADMIN");
+    if (!isSuper) return;
     const val = newBranchInput.value.trim();
     if (!val) return;
     if (!currentOrgBranches.includes(val)) {
@@ -1481,6 +1759,24 @@ function setupOrgSettingsModal() {
       const briefTime = document.getElementById("dailyBriefTimeInput");
       if (briefTime) briefTime.value = currentOrgData.daily_brief_time || "08:30";
     }
+
+    const isSuper = Boolean(currentUser && currentUser.role === "SUPER_ADMIN");
+    if (!isSuper) {
+      if (lockNotice) lockNotice.classList.remove("hidden");
+      if (nameInput) { nameInput.disabled = true; nameInput.classList.add("opacity-60", "cursor-not-allowed"); }
+      if (industryInput) { industryInput.disabled = true; industryInput.classList.add("opacity-60", "cursor-not-allowed"); }
+      if (taxInput) { taxInput.disabled = true; taxInput.classList.add("opacity-60", "cursor-not-allowed"); }
+      if (newBranchInput) { newBranchInput.disabled = true; newBranchInput.placeholder = "إدارة الفروع محصورة بمالك المنصة"; newBranchInput.classList.add("opacity-60", "cursor-not-allowed"); }
+      if (addBranchBtn) { addBranchBtn.disabled = true; addBranchBtn.classList.add("opacity-60", "cursor-not-allowed"); }
+    } else {
+      if (lockNotice) lockNotice.classList.add("hidden");
+      if (nameInput) { nameInput.disabled = false; nameInput.classList.remove("opacity-60", "cursor-not-allowed"); }
+      if (industryInput) { industryInput.disabled = false; industryInput.classList.remove("opacity-60", "cursor-not-allowed"); }
+      if (taxInput) { taxInput.disabled = false; taxInput.classList.remove("opacity-60", "cursor-not-allowed"); }
+      if (newBranchInput) { newBranchInput.disabled = false; newBranchInput.placeholder = "اسم الفرع الجديد (مثال: فرع خلدا...)"; newBranchInput.classList.remove("opacity-60", "cursor-not-allowed"); }
+      if (addBranchBtn) { addBranchBtn.disabled = false; addBranchBtn.classList.remove("opacity-60", "cursor-not-allowed"); }
+    }
+
     renderChips();
     modal.classList.remove("hidden");
     modal.classList.add("flex");
@@ -1508,20 +1804,36 @@ function setupOrgSettingsModal() {
       try {
         const autoToggle = document.getElementById("autoBriefToggle");
         const briefTime = document.getElementById("dailyBriefTimeInput");
-        const payload = {
-          name: document.getElementById("orgNameInput").value.trim(),
-          industry_type: document.getElementById("orgIndustryInput").value,
-          tax_number: document.getElementById("orgTaxInput").value.trim() || null,
-          branches: currentOrgBranches,
-          auto_daily_brief_enabled: autoToggle ? autoToggle.checked : true,
-          daily_brief_time: briefTime ? briefTime.value.trim() : "08:30"
-        };
+        const isSuper = Boolean(currentUser && currentUser.role === "SUPER_ADMIN");
 
-        const res = await fetch("/api/v1/analytics/organization-profile", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        let res;
+        if (!isSuper) {
+          // Non-super admins only update briefing schedule
+          const schedulePayload = {
+            auto_daily_brief_enabled: autoToggle ? autoToggle.checked : true,
+            daily_brief_time: briefTime ? briefTime.value.trim() : "08:30"
+          };
+          res = await authFetch("/api/v1/analytics/briefing-schedule", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(schedulePayload)
+          });
+        } else {
+          // Super Admin can update all fields
+          const fullPayload = {
+            name: document.getElementById("orgNameInput").value.trim(),
+            industry_type: document.getElementById("orgIndustryInput").value,
+            tax_number: document.getElementById("orgTaxInput").value.trim() || null,
+            branches: currentOrgBranches,
+            auto_daily_brief_enabled: autoToggle ? autoToggle.checked : true,
+            daily_brief_time: briefTime ? briefTime.value.trim() : "08:30"
+          };
+          res = await authFetch("/api/v1/analytics/organization-profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(fullPayload)
+          });
+        }
 
         if (!res.ok) {
           const err = await res.json();
@@ -1530,13 +1842,15 @@ function setupOrgSettingsModal() {
 
         const updated = await res.json();
         currentOrgData = updated;
-        currentOrgBranches = Array.isArray(updated.branches) ? [...updated.branches] : [];
+        if (updated.branches) {
+          currentOrgBranches = Array.isArray(updated.branches) ? [...updated.branches] : [];
+        }
 
         // Update header UI
         const nameEl = document.getElementById("headerOrgName");
-        if (nameEl) nameEl.textContent = updated.name;
+        if (nameEl && updated.name) nameEl.textContent = updated.name;
         const indEl = document.getElementById("headerOrgIndustry");
-        if (indEl) indEl.textContent = INDUSTRY_LABELS[updated.industry_type] || updated.industry_type;
+        if (indEl && updated.industry_type) indEl.textContent = INDUSTRY_LABELS[updated.industry_type] || updated.industry_type;
         const branchesEl = document.getElementById("branchesCountBadge");
         if (branchesEl) {
           branchesEl.textContent = currentOrgBranches.length > 0 ? `(${currentOrgBranches.length} فروع)` : "(الفرع الرئيسي)";
@@ -1546,7 +1860,7 @@ function setupOrgSettingsModal() {
 
         if (alertBox) {
           alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 rounded-xl p-3 text-xs flex items-center gap-2";
-          alertBox.innerHTML = `<span>✅ تم حفظ هوية المنشأة وفروعها والجدولة الصباحية بنجاح!</span>`;
+          alertBox.innerHTML = `<span>✅ تم حفظ الإعدادات بنجاح!</span>`;
         }
 
         setTimeout(() => {
@@ -1564,5 +1878,242 @@ function setupOrgSettingsModal() {
         if (window.lucide) lucide.createIcons();
       }
     });
+  }
+}
+
+function setupSuperAdminModal() {
+  const modal = document.getElementById("superAdminModal");
+  const openBtn = document.getElementById("openSuperAdminBtn");
+  const closeBtn1 = document.getElementById("closeSuperAdminModalBtn");
+  const closeBtn2 = document.getElementById("closeSuperAdminModalBtn2");
+  const tabOrgsBtn = document.getElementById("adminTabOrgsBtn");
+  const tabUsersBtn = document.getElementById("adminTabUsersBtn");
+  const tabOrgsContent = document.getElementById("adminTabOrgsContent");
+  const tabUsersContent = document.getElementById("adminTabUsersContent");
+  const openNewOrgBtn = document.getElementById("openNewOrgFormBtn");
+  const newOrgForm = document.getElementById("newOrgForm");
+  const openNewUserBtn = document.getElementById("openNewUserFormBtn");
+  const newUserForm = document.getElementById("newUserForm");
+
+  if (!modal) return;
+
+  const openModal = () => {
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    loadAdminOrganizationsList();
+    loadAdminUsersList();
+    if (window.lucide) lucide.createIcons();
+  };
+
+  const closeModal = () => {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  };
+
+  if (openBtn) openBtn.addEventListener("click", openModal);
+  if (closeBtn1) closeBtn1.addEventListener("click", closeModal);
+  if (closeBtn2) closeBtn2.addEventListener("click", closeModal);
+
+  // Tabs
+  if (tabOrgsBtn && tabUsersBtn) {
+    tabOrgsBtn.addEventListener("click", () => {
+      tabOrgsBtn.className = "px-4 py-2 text-purple-400 border-b-2 border-purple-500 transition flex items-center gap-1.5 cursor-pointer";
+      tabUsersBtn.className = "px-4 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+      tabOrgsContent.classList.remove("hidden");
+      tabUsersContent.classList.add("hidden");
+    });
+
+    tabUsersBtn.addEventListener("click", () => {
+      tabUsersBtn.className = "px-4 py-2 text-indigo-400 border-b-2 border-indigo-500 transition flex items-center gap-1.5 cursor-pointer";
+      tabOrgsBtn.className = "px-4 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+      tabUsersContent.classList.remove("hidden");
+      tabOrgsContent.classList.add("hidden");
+      loadAdminUsersList();
+    });
+  }
+
+  // Toggle Add Forms
+  if (openNewOrgBtn && newOrgForm) {
+    openNewOrgBtn.addEventListener("click", () => {
+      newOrgForm.classList.toggle("hidden");
+    });
+  }
+  if (openNewUserBtn && newUserForm) {
+    openNewUserBtn.addEventListener("click", () => {
+      newUserForm.classList.toggle("hidden");
+      loadPlatformOrganizations();
+    });
+  }
+
+  // Create Org Submit
+  if (newOrgForm) {
+    newOrgForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const payload = {
+          name: document.getElementById("newOrgName").value.trim(),
+          tax_number: document.getElementById("newOrgTax").value.trim() || null,
+          industry_type: document.getElementById("newOrgIndustry").value,
+          branches: document.getElementById("newOrgBranches").value.split(",").map(s => s.trim()).filter(Boolean),
+          telegram_bot_token: document.getElementById("newOrgBotToken").value.trim() || null,
+          admin_username: document.getElementById("newOrgAdminUser").value.trim(),
+          admin_password: document.getElementById("newOrgAdminPass").value.trim(),
+          admin_full_name: `مدير ${document.getElementById("newOrgName").value.trim()}`
+        };
+
+        const res = await authFetch("/api/v1/admin/organizations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تسجيل المنشأة");
+        }
+
+        alert("✅ تم تسجيل المنشأة وتخصيص البوت والمستخدم الإداري بنجاح!");
+        newOrgForm.reset();
+        newOrgForm.classList.add("hidden");
+        loadAdminOrganizationsList();
+        loadPlatformOrganizations();
+      } catch (err) {
+        alert(`❌ خطأ: ${err.message}`);
+      }
+    });
+  }
+
+  // Create User Submit
+  if (newUserForm) {
+    newUserForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const orgIdVal = document.getElementById("newUserOrgSelect").value.trim() || null;
+        const payload = {
+          username: document.getElementById("newUsername").value.trim(),
+          full_name: document.getElementById("newFullName").value.trim(),
+          password: document.getElementById("newUserPass").value.trim(),
+          role: document.getElementById("newUserRole").value,
+          organization_id: orgIdVal
+        };
+
+        const res = await authFetch("/api/v1/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل إنشاء المستخدم");
+        }
+
+        alert("✅ تم إنشاء المستخدم وتعيين دوره بنجاح!");
+        newUserForm.reset();
+        newUserForm.classList.add("hidden");
+        loadAdminUsersList();
+      } catch (err) {
+        alert(`❌ خطأ: ${err.message}`);
+      }
+    });
+  }
+}
+
+async function loadAdminOrganizationsList() {
+  const tbody = document.getElementById("adminOrgsTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">جاري تحميل المنشآت...</td></tr>`;
+
+  try {
+    const res = await authFetch("/api/v1/admin/organizations");
+    if (!res.ok) throw new Error("فشل جلب قائمة المنشآت");
+    const orgs = await res.json();
+    platformOrgsList = orgs;
+
+    if (!orgs || orgs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">لا توجد منشآت مسجلة.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = orgs.map(o => {
+      const branchesList = (o.branches || []).map(b => b.name).join(", ") || "الفرع الرئيسي";
+      const botBadge = o.telegram_bot_token 
+        ? `<span class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-mono text-[10px]">🤖 مفعّل (${o.telegram_bot_token.slice(0, 8)}...)</span>`
+        : `<span class="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px]">⚠️ غير مسجل</span>`;
+      
+      const isSelected = selectedTenantOrgId === o.id;
+
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="p-2.5 font-bold text-white flex items-center gap-1.5">
+            <span>${o.name}</span>
+            ${isSelected ? '<span class="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.2 rounded border border-purple-500/30">المعروضة حالياً</span>' : ''}
+          </td>
+          <td class="p-2.5 font-mono text-slate-300">${o.tax_number || '<span class="text-slate-500">غير مسجل</span>'}</td>
+          <td class="p-2.5 text-slate-300">${INDUSTRY_LABELS[o.industry_type] || o.industry_type}</td>
+          <td class="p-2.5 text-slate-400 text-[11px] max-w-[150px] truncate" title="${branchesList}">${branchesList}</td>
+          <td class="p-2.5">${botBadge}</td>
+          <td class="p-2.5 text-center">
+            <button onclick="window.selectTenantAndInspect('${o.id}')" class="bg-purple-950/70 hover:bg-purple-900 text-purple-200 border border-purple-500/30 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition active:scale-95 cursor-pointer">
+              معاينة كمنشأة
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
+  }
+}
+
+window.selectTenantAndInspect = (orgId) => {
+  selectedTenantOrgId = orgId;
+  const select = document.getElementById("superAdminOrgSelect");
+  if (select) select.value = orgId;
+  const modal = document.getElementById("superAdminModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+  fetchAllData();
+};
+
+async function loadAdminUsersList() {
+  const tbody = document.getElementById("adminUsersTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-slate-400">جاري تحميل المستخدمين...</td></tr>`;
+
+  try {
+    const res = await authFetch("/api/v1/admin/users");
+    if (!res.ok) throw new Error("فشل جلب قائمة المستخدمين");
+    const users = await res.json();
+
+    const roleMap = {
+      "SUPER_ADMIN": { label: "👑 مالك المنصة", class: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
+      "ORG_ADMIN": { label: "🏢 مدير المنشأة", class: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
+      "ACCOUNTANT": { label: "📊 محاسب قانوني", class: "bg-sky-500/20 text-sky-300 border-sky-500/30" },
+      "CASHIER": { label: "🛒 كاشير فروع", class: "bg-amber-500/20 text-amber-300 border-amber-500/30" }
+    };
+
+    tbody.innerHTML = users.map(u => {
+      const meta = roleMap[u.role] || { label: u.role, class: "bg-slate-700 text-slate-300 border-slate-600" };
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="p-2.5 font-mono font-bold text-white">${u.username}</td>
+          <td class="p-2.5 text-slate-200">${u.full_name || '-'}</td>
+          <td class="p-2.5">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${meta.class}">
+              ${meta.label}
+            </span>
+          </td>
+          <td class="p-2.5 text-slate-300">${u.organization_name || '<span class="text-purple-300">المنصة المركزية</span>'}</td>
+          <td class="p-2.5 text-center">
+            <span class="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[10px]">نشط</span>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
   }
 }

@@ -1,0 +1,161 @@
+from typing import Optional
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.schema import User, Organization, UserRoleEnum
+from app.core.security import (
+    verify_password,
+    hash_password,
+    create_access_token,
+    get_current_user
+)
+
+router = APIRouter(prefix="/auth", tags=["Authentication & SaaS Accounts"])
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: dict
+    organization: Optional[dict] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    """
+    تسجيل الدخول وإصدار رمز JWT مشفر يحمل صلاحيات المستخدم والمنشأة التابع لها.
+    """
+    username = req.username.strip()
+    user = db.query(User).filter(User.username.ilike(username)).first()
+
+    if not user or not verify_password(req.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="اسم المستخدم أو كلمة المرور غير صحيحة.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="هذا الحساب معطل حالياً، يرجى مراجعة إدارة المنصة."
+        )
+
+    org_data = None
+    if user.organization_id:
+        org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+        if org:
+            if not org.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="حساب هذه المنشأة التجارية معطل، يرجى مراجعة إدارة المنصة."
+                )
+            org_data = {
+                "id": org.id,
+                "name": org.name,
+                "industry_type": org.industry_type,
+                "tax_number": org.tax_number,
+                "currency": org.currency,
+                "has_dedicated_bot": bool(org.telegram_bot_token),
+                "auto_daily_brief_enabled": org.auto_daily_brief_enabled,
+                "daily_brief_time": org.daily_brief_time
+            }
+
+    token_payload = {
+        "sub": user.id,
+        "username": user.username,
+        "role": user.role,
+        "organization_id": user.organization_id
+    }
+    token = create_access_token(token_payload)
+
+    user_data = {
+        "id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "email": user.email,
+        "role": user.role,
+        "organization_id": user.organization_id
+    }
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": user_data,
+        "organization": org_data
+    }
+
+
+@router.get("/me")
+def get_my_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    استرجاع بيانات الحساب المسجل حالياً والتحقق الفوري من صلاحياته.
+    """
+    org_data = None
+    if current_user.organization_id:
+        org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+        if org:
+            org_data = {
+                "id": org.id,
+                "name": org.name,
+                "industry_type": org.industry_type,
+                "tax_number": org.tax_number,
+                "currency": org.currency,
+                "has_dedicated_bot": bool(org.telegram_bot_token),
+                "auto_daily_brief_enabled": org.auto_daily_brief_enabled,
+                "daily_brief_time": org.daily_brief_time
+            }
+
+    return {
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "full_name": current_user.full_name,
+            "email": current_user.email,
+            "role": current_user.role,
+            "organization_id": current_user.organization_id
+        },
+        "organization": org_data
+    }
+
+
+@router.post("/change-password")
+def change_password(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    تغيير كلمة المرور الخاصة بالمستخدم الحالي بعد التأكد من صحة القديمة.
+    """
+    if not verify_password(req.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="كلمة المرور الحالية غير صحيحة."
+        )
+
+    if len(req.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="يجب أن تتكون كلمة المرور الجديدة من 6 خانات على الأقل."
+        )
+
+    current_user.hashed_password = hash_password(req.new_password)
+    db.commit()
+
+    return {"message": "تم تحديث كلمة المرور بنجاح!"}

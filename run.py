@@ -15,23 +15,16 @@ sys.path.insert(0, os.path.join(CURRENT_DIR, "backend"))
 import uvicorn
 from app.main import app
 from app.core.config import settings
-from app.services.telegram_bot import TelegramBotRunner
+from app.services.telegram_bot import multi_bot_manager
 
 async def main():
     print("=" * 60)
-    print(f"Starting {settings.PROJECT_NAME}...")
+    print(f"Starting {settings.PROJECT_NAME} (Multi-Tenant SaaS)...")
     print(f"Web Dashboard: http://127.0.0.1:8000/dashboard")
-    print(f"Telegram Bot: https://t.me/my_smart_ops_bot")
     print("=" * 60)
 
-    tasks = []
-
-    # تشغيل بوت تيليجرام في الخلفية
-    if settings.TELEGRAM_BOT_TOKEN:
-        bot_runner = TelegramBotRunner()
-        bot_task = asyncio.create_task(bot_runner.start_polling())
-        tasks.append(bot_task)
-        print("Telegram Bot connected and polling active.")
+    # تشغيل منظومة البوتات المتعددة للمنشآت
+    bot_init_task = asyncio.create_task(multi_bot_manager.start_all_bots())
 
     # تشغيل خادم Uvicorn للوحة التحكم
     config = uvicorn.Config(

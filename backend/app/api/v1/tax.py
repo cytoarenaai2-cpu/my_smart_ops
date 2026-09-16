@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.schema import Organization, Branch, Transaction, AuditFlag
+from app.models.schema import Organization, Branch, Transaction, AuditFlag, User
+from app.core.security import get_optional_current_user, resolve_tenant_org_id
 from app.services.tax_engine import JordanTaxEngine
 from app.services.pdf_report_service import PDFReportGenerator
 from app.services.jofotara_service import JoFotaraService
@@ -80,16 +81,15 @@ def get_tax_summary(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     all_time: bool = Query(False),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    ملخص الحسابات الضريبية للفترة المحددة (المبيعات، ضريبة المخرجات، ضريبة المدخلات المقبولة، الصافي).
+    ملخص الحسابات الضريبية للفترة المحددة مع عزل المنشآت.
     """
+    organization_id = resolve_tenant_org_id(current_user, organization_id, db)
     if not organization_id:
-        org = db.query(Organization).first()
-        if not org:
-            raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
-        organization_id = org.id
+        raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
 
     txs, computed_period = _filter_tax_transactions(
         db=db,
@@ -120,16 +120,14 @@ def get_pre_filing_report(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     all_time: bool = Query(False),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    توليد ملف التدقيق الشامل الموجه للمحاسب القانوني قبل تقديم الإقرار لضريبة الدخل والمبيعات الأردنية.
+    توليد ملف التدقيق الشامل الموجه للمحاسب القانوني مع عزل المنشآت.
     """
-    org = None
-    if organization_id:
-        org = db.query(Organization).filter(Organization.id == organization_id).first()
-    if not org:
-        org = db.query(Organization).first()
+    target_org_id = resolve_tenant_org_id(current_user, organization_id, db)
+    org = db.query(Organization).filter(Organization.id == target_org_id).first() if target_org_id else db.query(Organization).first()
     if not org:
         raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
 

@@ -17,7 +17,9 @@ def init_db():
         for col, col_type in [
             ("telegram_chat_id", "VARCHAR(50)"),
             ("auto_daily_brief_enabled", "BOOLEAN DEFAULT 1"),
-            ("daily_brief_time", "VARCHAR(10) DEFAULT '08:30'")
+            ("daily_brief_time", "VARCHAR(10) DEFAULT '08:30'"),
+            ("telegram_bot_token", "VARCHAR(100)"),
+            ("is_active", "BOOLEAN DEFAULT 1")
         ]:
             try:
                 from sqlalchemy import text

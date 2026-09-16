@@ -11,6 +11,13 @@ Base = declarative_base()
 def utc_now():
     return datetime.now(timezone.utc)
 
+class UserRoleEnum:
+    SUPER_ADMIN = "SUPER_ADMIN"  # مالك المنصة
+    ORG_ADMIN = "ORG_ADMIN"      # مدير / مالك المنشأة
+    ACCOUNTANT = "ACCOUNTANT"    # محاسب قانوني
+    CASHIER = "CASHIER"          # كاشير / موظف فرع
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -24,17 +31,36 @@ class Organization(Base):
     is_tax_registered = Column(Boolean, default=False)
     tax_filing_period = Column(String(20), default="MONTHLY") # MONTHLY, BIMONTHLY
 
-    # Phase 3 Automation & Telegram Briefing fields
+    # Phase 3 Automation & Dedicated Telegram Bot fields
+    telegram_bot_token = Column(String(100), nullable=True)  # توكن بوت تيليجرام المستقل الخاص بالمنشأة
     telegram_chat_id = Column(String(50), nullable=True)
     auto_daily_brief_enabled = Column(Boolean, default=True)
     daily_brief_time = Column(String(10), default="08:30")
+    is_active = Column(Boolean, default=True)
     
     created_at = Column(DateTime, default=utc_now)
 
+    users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
     branches = relationship("Branch", back_populates="organization", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="organization", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="organization", cascade="all, delete-orphan")
     audit_flags = relationship("AuditFlag", back_populates="organization", cascade="all, delete-orphan")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=True)  # NULL لمالك المنصة (SUPER_ADMIN)
+    username = Column(String(100), unique=True, index=True, nullable=False)
+    email = Column(String(255), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    role = Column(String(30), default=UserRoleEnum.ORG_ADMIN, nullable=False)  # SUPER_ADMIN, ORG_ADMIN, ACCOUNTANT, CASHIER
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utc_now)
+
+    organization = relationship("Organization", back_populates="users")
 
 
 class Branch(Base):
