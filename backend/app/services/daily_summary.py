@@ -316,22 +316,41 @@ class DailySummaryService:
             f"📅 *الفترة:* {m['period']} ({m['transactions_count']} فاتورة)",
             f"🎯 *درجة الجاهزية الضريبية:* {m['compliance_score']}% ({'جاهز للتقديم ✅' if m['is_audit_ready'] else 'يتطلب مراجعة ⚠️'})",
             "",
-            "📊 *1. وعاء ضريبة المبيعات العامة (16%):*",
-            f"  • مبيعات خاضعة للضريبة: {p['taxable_sales_subtotal']:,.3f} د.أ",
-            f"  • ضريبة المخرجات المحصلة (16%): {p['output_tax_collected']:,.3f} د.أ",
-            f"  • ضريبة المدخلات المقبولة: ({p['eligible_input_tax']:,.3f}) د.أ",
+            "📊 *1. ملخص المبيعات وضريبة المخرجات (16%):*",
+            f"  • مبيعات خاضعة للضريبة (16%): {p['taxable_sales_subtotal']:,.3f} د.أ",
         ]
 
+        if p.get('service_charge_total', 0) > 0:
+            lines.append(f"    (منها بدل خدمة مطاعم: {p['service_charge_total']:,.3f} د.أ)")
+
+        lines.append(f"  • ضريبة المبيعات المحصلة (16%): {p['output_tax_collected']:,.3f} د.أ")
+
+        if p.get('exempt_or_zero_sales', 0) > 0:
+            lines.append(f"  • مبيعات معفاة / بنسبة صفرية: {p['exempt_or_zero_sales']:,.3f} د.أ")
+
+        lines.append(f"  • *إجمالي المبيعات الشامل للضريبة:* `{p['gross_sales']:,.3f} د.أ`")
+
+        lines.extend([
+            "",
+            "🛒 *2. المشتريات والمصروفات (ضريبة المدخلات):*",
+            f"  • إجمالي المشتريات والمصروفات المسجلة: {p.get('gross_expenses_and_purchases', 0.0):,.3f} د.أ",
+            f"  • مشتريات معززة برقم ضريبي (JoFotara): {p.get('eligible_purchases_subtotal', 0.0):,.3f} د.أ",
+            f"  • ضريبة المدخلات المقبولة للخصم: ({p['eligible_input_tax']:,.3f}) د.أ",
+        ])
+
+        if p.get('ineligible_expenses_subtotal', 0) > 0:
+            lines.append(f"  • مصروفات فاقدة للرقم الضريبي: {p['ineligible_expenses_subtotal']:,.3f} د.أ")
+
         if p['net_sales_tax_payable'] > 0:
-            lines.append(f"  • *صافي الضريبة المستحقة للدفع:* `{p['net_sales_tax_payable']:,.3f} د.أ`")
+            lines.append(f"\n⚖️ *صافي الضريبة المستحقة للدفع للدائرة:* `{p['net_sales_tax_payable']:,.3f} د.أ`")
         else:
-            lines.append(f"  • *رصيد دائن مدور للفترة القادمة:* `{p['tax_credit_carried_forward']:,.3f} د.أ`")
+            lines.append(f"\n⚖️ *رصيد ضريبي دائن مدور للفترة القادمة:* `{p['tax_credit_carried_forward']:,.3f} د.أ`")
 
         rec_status = "✅ مطابقة تامة" if not rec['has_discrepancy'] else f"⚠️ فارق {rec['variance']:,.3f} د.أ"
 
         lines.extend([
             "",
-            f"💳 *2. مطابقة وسائل التحصيل:* {rec_status}",
+            f"💳 *3. مطابقة وسائل التحصيل:* {rec_status}",
             f"  • كاش: {rec['cash_collected']:,.3f} د.أ",
             f"  • بطاقات POS: {rec['cards_pos_collected']:,.3f} د.أ",
             f"  • كليك CliQ: {rec['cliq_collected']:,.3f} د.أ",

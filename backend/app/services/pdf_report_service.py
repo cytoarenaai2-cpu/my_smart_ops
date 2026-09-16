@@ -192,35 +192,33 @@ class PDFReportGenerator:
         story.append(meta_table)
         story.append(Spacer(1, 12))
 
-        # 3. جدول ملخص ضريبة المبيعات العامة 16% (Sales Tax Breakdown)
-        story.append(Paragraph(cls.ar("1. وعاء ضريبة المبيعات العامة (16%) والموقف الضريبي الصافي:"), style_sec_header))
+        # 3. جدول ملخص المبيعات وضريبة المخرجات (Sales Tax Breakdown)
+        story.append(Paragraph(cls.ar("1. وعاء المبيعات وضريبة المخرجات المحصلة (16% ISTD):"), style_sec_header))
         story.append(Spacer(1, 4))
 
-        tax_table_data = [
-            [cls.ar("البيان المحاسبي والضريبي (ISTD)"), cls.ar("المبلغ (دينار أردني)")],
-            [cls.ar("إجمالي المبيعات الخاضعة للضريبة 16% (شاملة بدل الخدمة)"), f"{pos.get('taxable_sales_subtotal', 0.0):,.3f}"],
-            [cls.ar("ضريبة المبيعات العامة المحصلة - ضريبة المخرجات (Output Tax 16%)"), f"{pos.get('output_tax_collected', 0.0):,.3f}"],
-            [cls.ar("ضريبة المدخلات المقبولة للخصم قانونياً (Eligible Input Tax)"), f"({pos.get('eligible_input_tax', 0.0):,.3f})"],
-            [cls.ar("مشتريات ونفقات غير مقبولة ضريبياً (لغياب الرقم الضريبي/JoFotara)"), f"{pos.get('ineligible_expenses_subtotal', 0.0):,.3f}"],
-            [cls.ar("ضريبة مهددة بالضياع نتيجة فواتير غير معززة برقم ضريبي"), f"{pos.get('lost_input_tax_deduction', 0.0):,.3f}"],
+        base_sales = pos.get("base_sales_subtotal", pos.get("taxable_sales_subtotal", 0.0))
+        svc_total = pos.get("service_charge_total", 0.0)
+
+        sales_table_data = [
+            [cls.ar("البيان المحاسبي للمبيعات والضريبة"), cls.ar("المبلغ (دينار أردني)")],
+            [cls.ar("المبيعات الأساسية (قبل بدل الخدمة والضريبة)"), f"{base_sales:,.3f}"],
         ]
 
-        net_payable = pos.get("net_sales_tax_payable", 0.0)
-        tax_credit = pos.get("tax_credit_carried_forward", 0.0)
-
-        if net_payable > 0:
-            tax_table_data.append([
-                cls.ar("صافي ضريبة المبيعات المستحقة للدفع لدائرة ضريبة الدخل والمبيعات:"),
-                f"{net_payable:,.3f} د.أ (مستحق للدفع)"
-            ])
-        else:
-            tax_table_data.append([
-                cls.ar("رصيد ضريبي دائن مدور للفترات القادمة:"),
-                f"{tax_credit:,.3f} د.أ (رصيد دائن)"
+        if svc_total > 0:
+            sales_table_data.append([
+                cls.ar("إجمالي بدل الخدمة الخاضع للضريبة (قطاع المطاعم)"),
+                f"{svc_total:,.3f}"
             ])
 
-        tax_table = Table(tax_table_data, colWidths=[380, 160])
-        tax_table.setStyle(TableStyle([
+        sales_table_data.extend([
+            [cls.ar("الوعاء الإجمالي الخاضع لضريبة المبيعات 16%"), f"{pos.get('taxable_sales_subtotal', 0.0):,.3f}"],
+            [cls.ar("ضريبة المبيعات العامة المحصلة - ضريبة المخرجات (Output Tax 16%)"), f"{pos.get('output_tax_collected', 0.0):,.3f}"],
+            [cls.ar("مبيعات معفاة أو بنسبة صفرية (غير خاضعة للضريبة)"), f"{pos.get('exempt_or_zero_sales', 0.0):,.3f}"],
+            [cls.ar("إجمالي المبيعات الشامل للضريبة (مطابق للمقبوضات)"), f"{pos.get('gross_sales', 0.0):,.3f}"],
+        ])
+
+        sales_table = Table(sales_table_data, colWidths=[380, 160])
+        sales_table.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font_reg),
             ("FONTNAME", (0, 0), (-1, 0), font_bld),
             ("FONTNAME", (0, -1), (-1, -1), font_bld),
@@ -230,18 +228,103 @@ class PDFReportGenerator:
             ("ALIGN", (0, 0), (0, -1), "RIGHT"),
             ("ALIGN", (1, 0), (1, -1), "CENTER"),
             ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#f8fafc")),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f1f5f9")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (0, -1), 8),
+        ]))
+        story.append(sales_table)
+        story.append(Spacer(1, 10))
+
+        # 4. جدول المشتريات والمصروفات وضريبة المدخلات (Purchases & Input Tax)
+        story.append(Paragraph(cls.ar("2. المشتريات والمصروفات وضريبة المدخلات (JoFotara Compliance):"), style_sec_header))
+        story.append(Spacer(1, 4))
+
+        purch_data = [
+            [cls.ar("البيان المحاسبي للمشتريات والمصروفات"), cls.ar("المبلغ (دينار أردني)")],
+            [cls.ar("إجمالي المشتريات والمصروفات المسجلة"), f"{pos.get('gross_expenses_and_purchases', 0.0):,.3f}"],
+            [cls.ar("مشتريات مؤهلة معززة برقم ضريبي للمورد (JoFotara)"), f"{pos.get('eligible_purchases_subtotal', 0.0):,.3f}"],
+            [cls.ar("ضريبة المدخلات المقبولة للخصم قانونياً (رد الضريبة)"), f"({pos.get('eligible_input_tax', 0.0):,.3f})"],
+        ]
+
+        if pos.get("ineligible_expenses_subtotal", 0.0) > 0:
+            purch_data.append([
+                cls.ar("نفقات ومصروفات غير مقبولة ضريبياً (فاقدة للرقم الضريبي)"),
+                f"{pos.get('ineligible_expenses_subtotal', 0.0):,.3f}"
+            ])
+            purch_data.append([
+                cls.ar("ضريبة مدخلات مهددة بالضياع لغياب الفواتير الإلكترونية"),
+                f"{pos.get('lost_input_tax_deduction', 0.0):,.3f}"
+            ])
+
+        purch_table = Table(purch_data, colWidths=[380, 160])
+        purch_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font_reg),
+            ("FONTNAME", (0, 0), (-1, 0), font_bld),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f766e")), # Teal
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+            ("ALIGN", (1, 0), (1, -1), "CENTER"),
+            ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#f8fafc")),
             ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#f0fdf4")),
-            ("BACKGROUND", (0, 4), (-1, 5), colors.HexColor("#fff1f2")),
-            ("TEXTCOLOR", (1, 4), (1, 5), colors.HexColor("#be123c")),
-            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e0f2fe") if net_payable > 0 else colors.HexColor("#f0fdf4")),
-            ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor("#0369a1") if net_payable > 0 else colors.HexColor("#15803d")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (0, -1), 8),
+        ]))
+        story.append(purch_table)
+        story.append(Spacer(1, 10))
+
+        # 5. ملخص الموقف الصافي للدائرة والدخل التقديري
+        story.append(Paragraph(cls.ar("3. الموقف الضريبي النهائي وصافي الالتزام (Net Tax Liability):"), style_sec_header))
+        story.append(Spacer(1, 4))
+
+        net_payable = pos.get("net_sales_tax_payable", 0.0)
+        tax_credit = pos.get("tax_credit_carried_forward", 0.0)
+        est_income = pos.get("estimated_taxable_income", 0.0)
+
+        net_data = [
+            [cls.ar("البيان الختامي"), cls.ar("المبلغ (دينار أردني)")],
+        ]
+
+        if net_payable > 0:
+            net_data.append([
+                cls.ar("صافي ضريبة المبيعات المستحقة للدفع لدائرة ضريبة الدخل والمبيعات:"),
+                f"{net_payable:,.3f} د.أ (مستحق للدفع)"
+            ])
+        else:
+            net_data.append([
+                cls.ar("رصيد ضريبي دائن مدور للفترات القادمة:"),
+                f"{tax_credit:,.3f} د.أ (رصيد دائن)"
+            ])
+
+        net_data.append([
+            cls.ar("صافي الدخل التقديري للأعمال (الخاضع لضريبة الدخل ISTD):"),
+            f"{est_income:,.3f} د.أ"
+        ])
+
+        net_table = Table(net_data, colWidths=[380, 160])
+        net_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font_reg),
+            ("FONTNAME", (0, 0), (-1, 0), font_bld),
+            ("FONTNAME", (0, 1), (-1, 1), font_bld),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#475569")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+            ("ALIGN", (1, 0), (1, -1), "CENTER"),
+            ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#e0f2fe") if net_payable > 0 else colors.HexColor("#f0fdf4")),
+            ("TEXTCOLOR", (0, 1), (-1, 1), colors.HexColor("#0369a1") if net_payable > 0 else colors.HexColor("#15803d")),
+            ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#f8fafc")),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (0, -1), 8),
         ]))
-        story.append(tax_table)
-        story.append(Spacer(1, 12))
+        story.append(net_table)
+        story.append(Spacer(1, 10))
 
         # 4. جدول مطابقة المبيعات مع وسائل التحصيل الفعلية (Payment Reconciliation)
         story.append(Paragraph(cls.ar("2. مطابقة المبيعات المصرحة مع المقبوضات الفعلية (Reconciliation):"), style_sec_header))

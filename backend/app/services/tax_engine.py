@@ -6,14 +6,16 @@ from app.core.config import settings
 
 class TaxPositionResult(BaseModel):
     # مبيعات
-    gross_sales: float = Field(0.0, description="إجمالي المبيعات الشاملة")
-    taxable_sales_subtotal: float = Field(0.0, description="المبيعات الخاضعة للضريبة قبل الـ 16%")
+    gross_sales: float = Field(0.0, description="إجمالي المبيعات الشاملة للضريبة والخدمة")
+    base_sales_subtotal: float = Field(0.0, description="المبيعات الأساسية قبل بدل الخدمة والضريبة")
+    service_charge_total: float = Field(0.0, description="إجمالي بدل الخدمة في قطاع المطاعم")
+    taxable_sales_subtotal: float = Field(0.0, description="الوعاء الخاضع لضريبة المبيعات 16% (المبيعات + بدل الخدمة)")
     output_tax_collected: float = Field(0.0, description="ضريبة المبيعات المحصلة لحساب الضريبة (16%)")
-    exempt_or_zero_sales: float = Field(0.0, description="مبيعات معفاة أو بنسبة صفرية")
+    exempt_or_zero_sales: float = Field(0.0, description="مبيعات معفاة أو بنسبة صفرية (غير خاضعة)")
 
     # مشتريات ومصروفات
     gross_expenses_and_purchases: float = Field(0.0, description="إجمالي المشتريات والمصروفات المسجلة")
-    eligible_purchases_subtotal: float = Field(0.0, description="المشتريات المؤهلة المقبولة ضريبياً")
+    eligible_purchases_subtotal: float = Field(0.0, description="المشتريات المؤهلة المقبولة ضريبياً (JoFotara)")
     eligible_input_tax: float = Field(0.0, description="ضريبة المدخلات القابلة للخصم قانونياً (رد الضريبة)")
     
     # المخاطر والنفقات المرفوضة
@@ -49,6 +51,8 @@ class JordanTaxEngine:
     @classmethod
     def calculate_tax_position(cls, transactions: List[Transaction]) -> TaxPositionResult:
         gross_sales = 0.0
+        base_sales_subtotal = 0.0
+        service_charge_total = 0.0
         taxable_sales_subtotal = 0.0
         output_tax_collected = 0.0
         exempt_or_zero_sales = 0.0
@@ -63,8 +67,11 @@ class JordanTaxEngine:
             if tx.transaction_type == "SALE":
                 gross_sales += tx.total_amount
                 if tx.tax_status == "STANDARD_16":
+                    svc = tx.service_charge or 0.0
+                    base_sales_subtotal += tx.subtotal
+                    service_charge_total += svc
                     # احتساب الوعاء الخاضع للضريبة بما يشمل بدل الخدمة في قطاع المطاعم
-                    taxable_sales_subtotal += (tx.subtotal + (tx.service_charge or 0.0))
+                    taxable_sales_subtotal += (tx.subtotal + svc)
                     output_tax_collected += tx.tax_amount
                 else:
                     exempt_or_zero_sales += tx.total_amount
@@ -94,6 +101,8 @@ class JordanTaxEngine:
 
         return TaxPositionResult(
             gross_sales=round(gross_sales, 3),
+            base_sales_subtotal=round(base_sales_subtotal, 3),
+            service_charge_total=round(service_charge_total, 3),
             taxable_sales_subtotal=round(taxable_sales_subtotal, 3),
             output_tax_collected=round(output_tax_collected, 3),
             exempt_or_zero_sales=round(exempt_or_zero_sales, 3),

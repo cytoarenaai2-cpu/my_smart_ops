@@ -853,17 +853,93 @@ function setupTaxModal() {
           <div class="col-span-2"><span class="text-slate-400">درجة الجاهزية:</span> <div class="font-bold ${m.is_audit_ready ? 'text-emerald-400' : 'text-amber-400'}">${m.compliance_score}% (${m.is_audit_ready ? 'جاهز للتقديم' : 'يتطلب مراجعة'})</div></div>
         </div>
 
+        <!-- 1. Sales & Output Tax Breakdown -->
         <div class="space-y-2">
           <h4 class="font-bold text-white text-sm flex items-center justify-between">
-            <span>1. ملخص ضريبة المبيعات العامة (16%)</span>
+            <span>1. ملخص المبيعات وضريبة المخرجات (16% ISTD)</span>
             <span class="text-xs font-normal text-slate-400">النظام الضريبي الأردني (ISTD / JoFotara)</span>
           </h4>
-          <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden">
+          <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden text-xs">
             <tbody class="divide-y divide-slate-800 text-slate-200">
-              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">إجمالي المبيعات الخاضعة للضريبة (مع بدل الخدمة):</td><td class="p-2 font-mono font-bold">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td></tr>
-              <tr><td class="p-2 text-slate-300">ضريبة المبيعات المحصلة (Output Tax 16%):</td><td class="p-2 font-mono font-bold text-sky-400">${Number(p.output_tax_collected).toFixed(3)} د.أ</td></tr>
-              <tr class="bg-slate-800/40"><td class="p-2 text-slate-300">ضريبة المدخلات المقبولة للخصم (Input Tax):</td><td class="p-2 font-mono font-bold text-emerald-400">(${Number(p.eligible_input_tax).toFixed(3)}) د.أ</td></tr>
-              <tr class="bg-sky-950/60 font-bold"><td class="p-2.5 text-sky-200 text-sm">صافي الضريبة العامة المستحقة للدائرة (أو رصيد دائن):</td><td class="p-2.5 font-mono text-base text-sky-300">${p.net_sales_tax_payable > 0 ? Number(p.net_sales_tax_payable).toFixed(3) + ' د.أ (للدفع)' : Number(p.tax_credit_carried_forward).toFixed(3) + ' د.أ (رصيد دائن)'}</td></tr>
+              <tr class="bg-slate-800/40">
+                <td class="p-2 text-slate-300">المبيعات الأساسية (قبل بدل الخدمة والضريبة):</td>
+                <td class="p-2 font-mono font-bold">${Number(p.base_sales_subtotal || (p.taxable_sales_subtotal - (p.service_charge_total || 0))).toFixed(3)} د.أ</td>
+              </tr>
+              ${Number(p.service_charge_total) > 0 ? `
+              <tr>
+                <td class="p-2 text-slate-300">إجمالي بدل الخدمة الخاضع للضريبة (قطاع المطاعم):</td>
+                <td class="p-2 font-mono font-bold text-amber-300">${Number(p.service_charge_total).toFixed(3)} د.أ</td>
+              </tr>` : ''}
+              <tr class="bg-slate-800/60 font-semibold">
+                <td class="p-2 text-slate-200">الوعاء الإجمالي الخاضع لضريبة المبيعات 16%:</td>
+                <td class="p-2 font-mono font-bold text-sky-300">${Number(p.taxable_sales_subtotal).toFixed(3)} د.أ</td>
+              </tr>
+              <tr>
+                <td class="p-2 text-slate-300">ضريبة المبيعات العامة المحصلة (Output Tax 16%):</td>
+                <td class="p-2 font-mono font-bold text-sky-400">${Number(p.output_tax_collected).toFixed(3)} د.أ</td>
+              </tr>
+              <tr class="bg-slate-800/40">
+                <td class="p-2 text-slate-300">مبيعات معفاة أو بنسبة صفرية (غير خاضعة للضريبة):</td>
+                <td class="p-2 font-mono font-bold text-slate-300">${Number(p.exempt_or_zero_sales || 0).toFixed(3)} د.أ</td>
+              </tr>
+              <tr class="bg-sky-950/70 font-bold border-t-2 border-sky-800">
+                <td class="p-2.5 text-sky-200 text-xs">إجمالي المبيعات الشامل للضريبة (مطابق للمقبوضات):</td>
+                <td class="p-2.5 font-mono text-sm text-sky-300">${Number(p.gross_sales).toFixed(3)} د.أ</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 2. Purchases & Input Tax Breakdown -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm flex items-center justify-between">
+            <span>2. المشتريات والمصروفات وضريبة المدخلات (JoFotara Compliance)</span>
+            <span class="text-xs font-normal text-emerald-400">رد وخصم الضريبة قانونياً</span>
+          </h4>
+          <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden text-xs">
+            <tbody class="divide-y divide-slate-800 text-slate-200">
+              <tr class="bg-slate-800/40">
+                <td class="p-2 text-slate-300">إجمالي المشتريات والمصروفات المسجلة:</td>
+                <td class="p-2 font-mono font-bold">${Number(p.gross_expenses_and_purchases || 0).toFixed(3)} د.أ</td>
+              </tr>
+              <tr>
+                <td class="p-2 text-slate-300">مشتريات مؤهلة معززة برقم ضريبي للمورد (JoFotara):</td>
+                <td class="p-2 font-mono font-bold text-emerald-400">${Number(p.eligible_purchases_subtotal || 0).toFixed(3)} د.أ</td>
+              </tr>
+              <tr class="bg-slate-800/40">
+                <td class="p-2 text-slate-300">ضريبة المدخلات المقبولة للخصم قانونياً (رد الضريبة):</td>
+                <td class="p-2 font-mono font-bold text-emerald-400">(${Number(p.eligible_input_tax || 0).toFixed(3)}) د.أ</td>
+              </tr>
+              ${Number(p.ineligible_expenses_subtotal) > 0 ? `
+              <tr class="bg-rose-950/30 text-rose-300">
+                <td class="p-2">نفقات ومصروفات فاقدة للرقم الضريبي (غير مقبولة):</td>
+                <td class="p-2 font-mono font-bold">${Number(p.ineligible_expenses_subtotal).toFixed(3)} د.أ</td>
+              </tr>` : ''}
+            </tbody>
+          </table>
+          ${Number(p.gross_expenses_and_purchases) === 0 ? `
+          <p class="text-[11px] text-slate-400 italic bg-slate-800/30 p-2 rounded-lg border border-slate-800">
+            ℹ️ لا توجد فواتير مشتريات أو مصروفات موردين مسجلة في هذه الفترة (كافة العمليات مبيعات زبائن).
+          </p>` : ''}
+        </div>
+
+        <!-- 3. Net Tax Position & Estimated Income Tax -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm">3. الموقف الضريبي النهائي وصافي الالتزام</h4>
+          <table class="w-full text-right border-collapse border border-slate-800 rounded-lg overflow-hidden text-xs">
+            <tbody class="divide-y divide-slate-800 text-slate-200">
+              <tr class="bg-sky-950/80 font-bold">
+                <td class="p-2.5 text-sky-200 text-xs sm:text-sm">صافي ضريبة المبيعات المستحقة للدفع للدائرة (أو رصيد دائن):</td>
+                <td class="p-2.5 font-mono text-sm sm:text-base text-sky-300">
+                  ${p.net_sales_tax_payable > 0 
+                    ? Number(p.net_sales_tax_payable).toFixed(3) + ' د.أ (مستحق للدفع للدائرة)' 
+                    : Number(p.tax_credit_carried_forward).toFixed(3) + ' د.أ (رصيد دائن مدور)'}
+                </td>
+              </tr>
+              <tr class="bg-slate-800/50">
+                <td class="p-2 text-slate-300">صافي الدخل التقديري للأعمال (الخاضع لضريبة الدخل ISTD):</td>
+                <td class="p-2 font-mono font-bold text-amber-300">${Number(p.estimated_taxable_income || 0).toFixed(3)} د.أ</td>
+              </tr>
             </tbody>
           </table>
         </div>
