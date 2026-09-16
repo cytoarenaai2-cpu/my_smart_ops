@@ -931,40 +931,32 @@ function setupTaxModal() {
   closeBtn1.addEventListener("click", closeModal);
   closeBtn2.addEventListener("click", closeModal);
 
-  printBtn.addEventListener("click", async () => {
+  printBtn.addEventListener("click", () => {
     const originalContent = printBtn.innerHTML;
     try {
       printBtn.disabled = true;
       printBtn.innerHTML = `
-        <svg class="animate-spin h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <svg class="animate-spin h-4 w-4 text-white inline ml-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        <span>جاري إنشاء ملف PDF...</span>
+        <span>جاري تنزيل ملف PDF...</span>
       `;
 
       const pdfUrl = currentTaxPeriod === "all"
         ? "/api/v1/tax/pre-filing-report/pdf?all_time=true"
         : `/api/v1/tax/pre-filing-report/pdf?days=${currentTaxPeriod}`;
 
-      const res = await fetch(pdfUrl);
-      if (!res.ok) throw new Error("فشل توليد ملف PDF من الخادم");
-
-      const blob = await res.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = `JoFotara_Tax_Report_${currentTaxPeriod}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      // تنزيل الملف مباشرة على جهاز المستخدم
+      window.location.href = pdfUrl;
     } catch (err) {
       alert("حدث خطأ أثناء تحميل ملف PDF: " + err.message);
     } finally {
-      printBtn.disabled = false;
-      printBtn.innerHTML = originalContent;
-      if (window.lucide) lucide.createIcons();
+      setTimeout(() => {
+        printBtn.disabled = false;
+        printBtn.innerHTML = originalContent;
+        if (window.lucide) lucide.createIcons();
+      }, 2000);
     }
   });
 }
