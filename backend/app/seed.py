@@ -137,7 +137,7 @@ def seed_demo_data():
                 username="baraka_admin",
                 full_name="فهد البركة (مدير أسواق البركة)",
                 email="admin@baraka.jo",
-                hashed_password=hash_password("Baraka@123"),
+                hashed_password=hash_password("Admin@123"),
                 role=UserRoleEnum.ORG_ADMIN,
                 is_active=True
             ))

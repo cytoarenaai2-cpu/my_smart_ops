@@ -124,19 +124,30 @@ async function handleLoginSubmit(e) {
   submitBtn.innerHTML = `<span>جاري التحقق والدخول...</span>`;
 
   try {
-    const formData = new URLSearchParams();
-    formData.append("username", uInput.value.trim());
-    formData.append("password", pInput.value.trim());
+    const payload = {
+      username: uInput.value.trim(),
+      password: pInput.value.trim()
+    };
 
     const res = await fetch("/api/v1/auth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formData.toString()
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "اسم المستخدم أو كلمة المرور غير صحيحة");
+      let errMsg = "اسم المستخدم أو كلمة المرور غير صحيحة";
+      try {
+        const err = await res.json();
+        if (typeof err.detail === "string") {
+          errMsg = err.detail;
+        } else if (Array.isArray(err.detail) && err.detail.length > 0) {
+          errMsg = err.detail.map(d => d.msg || JSON.stringify(d)).join(" - ");
+        } else if (err.detail && typeof err.detail === "object") {
+          errMsg = JSON.stringify(err.detail);
+        }
+      } catch (_) {}
+      throw new Error(errMsg);
     }
 
     const data = await res.json();

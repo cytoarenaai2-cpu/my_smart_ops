@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -33,14 +33,39 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+async def login(request: Request, db: Session = Depends(get_db)):
     """
     تسجيل الدخول وإصدار رمز JWT مشفر يحمل صلاحيات المستخدم والمنشأة التابع لها.
+    يدعم كلاً من JSON payload و x-www-form-urlencoded و FormData.
     """
-    username = req.username.strip()
+    content_type = request.headers.get("content-type", "")
+    username = ""
+    password = ""
+
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            username = str(body.get("username", "")).strip()
+            password = str(body.get("password", ""))
+        except Exception:
+            pass
+    else:
+        try:
+            form = await request.form()
+            username = str(form.get("username", "")).strip()
+            password = str(form.get("password", ""))
+        except Exception:
+            pass
+
+    if not username or not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="يرجى إدخال اسم المستخدم وكلمة المرور."
+        )
+
     user = db.query(User).filter(User.username.ilike(username)).first()
 
-    if not user or not verify_password(req.password, user.hashed_password):
+    if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="اسم المستخدم أو كلمة المرور غير صحيحة.",
