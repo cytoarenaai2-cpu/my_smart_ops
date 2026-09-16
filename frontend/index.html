@@ -900,8 +900,9 @@
           <span>تم، استعراض العمليات في لوحة التحكم</span>
         </button>
       </div>
-
     </div>
+  </div>
+
   <!-- JoFotara QR & e-Invoice Inspector Modal -->
   <div id="jofotaraModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4 overflow-y-auto">
     <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl p-4 sm:p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto custom-scrollbar">
@@ -920,8 +921,20 @@
             <p class="text-[11px] sm:text-xs text-slate-400">تشفير TLV المعتمد ومطابقة حزم دائرة ضريبة الدخل والمبيعات (ISTD)</p>
           </div>
         </div>
-        <button type="button" id="closeJoFotaraModalBtn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition">
+        <button type="button" id="closeJoFotaraModalBtn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition cursor-pointer">
           <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Dual Mode Selector Tabs -->
+      <div class="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800 text-xs">
+        <button type="button" id="tabQrReadable" class="flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer">
+          <i data-lucide="smartphone" class="w-4 h-4"></i>
+          <span>📱 كاميرا الهاتف العادية (نص مقروء فوراً)</span>
+        </button>
+        <button type="button" id="tabQrTlv" class="flex-1 py-2 px-3 rounded-lg font-medium text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer">
+          <i data-lucide="shield-check" class="w-4 h-4"></i>
+          <span>🏛️ معيار ضريبة الدخل ISTD (تشفير TLV)</span>
         </button>
       </div>
 
@@ -938,17 +951,20 @@
               <i data-lucide="check-circle" class="w-3 h-3"></i>
               <span>معتمد ومطابق للمعايير</span>
             </span>
-            <p class="text-[10px] text-slate-400">قابل للمسح بكاميرا الهاتف أو أجهزة قراءة الفوترة الضريبية</p>
+            <p id="jofotaraModeDesc" class="text-[10px] text-emerald-400/90 leading-tight">مسح هذا الرمز بكاميرا الهاتف العادية يظهر بيانات الفاتورة بنص عربي مقروء ومباشر</p>
           </div>
 
-          <button type="button" id="downloadJoFotaraQrBtn" class="w-full flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95">
-            <i data-lucide="download" class="w-3.5 h-3.5"></i>
-            <span>تنزيل رمز QR (PNG)</span>
-          </button>
+          <div class="w-full space-y-1.5">
+            <button type="button" id="downloadJoFotaraQrBtn" class="w-full flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              <span id="downloadQrBtnText">تنزيل رمز QR المقروء (PNG)</span>
+            </button>
+          </div>
         </div>
 
-        <!-- Right: Decoded TLV Details -->
+        <!-- Right: Decoded Details & Readable Text -->
         <div class="sm:col-span-2 space-y-2.5 text-xs">
+          <!-- 5 Official Fields -->
           <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
             <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
               <span class="text-slate-400 font-medium">1. اسم المنشأة (البائع):</span>
@@ -972,19 +988,37 @@
             </div>
           </div>
 
-          <!-- Raw TLV Base64 String -->
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5">
-            <span class="text-[10px] text-slate-400 block mb-1 font-mono">سلسلة TLV Base64 القياسية (ISTD QR String):</span>
+          <!-- Section 1: Phone Camera Readable Text Preview (shown in readable mode) -->
+          <div id="readableTextSection" class="bg-slate-950/60 border border-emerald-500/20 rounded-xl p-2.5 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                <span>النص الصريح الظاهر بكاميرا الهاتف عند مسح الرمز:</span>
+              </span>
+              <button type="button" id="copyReadableTextBtn" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer">
+                <i data-lucide="copy" class="w-3 h-3"></i>
+                <span>نسخ النص</span>
+              </button>
+            </div>
+            <pre id="readableTextContent" class="text-[11px] text-slate-200 font-mono whitespace-pre-wrap leading-relaxed bg-slate-900/90 p-2.5 rounded-lg border border-slate-800 max-h-32 overflow-y-auto custom-scrollbar"></pre>
+          </div>
+
+          <!-- Section 2: Raw TLV Base64 String (shown in TLV mode) -->
+          <div id="tlvSection" class="hidden bg-slate-950/60 border border-slate-800 rounded-xl p-2.5 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] text-slate-400 font-mono">سلسلة TLV Base64 الضريبية المشفرة (ISTD JoFotara Raw):</span>
+              <span class="text-[10px] text-amber-400/80 font-mono">تفكها أجهزة الضريبة آلياً</span>
+            </div>
             <input type="text" id="jofotaraTlvRaw" readonly class="w-full bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-300 px-2 py-1 rounded focus:outline-none cursor-pointer" title="انقر للنسخ" onclick="this.select(); navigator.clipboard.writeText(this.value);" />
           </div>
 
           <!-- Action buttons for payload -->
           <div class="flex items-center gap-2 pt-1">
-            <button type="button" id="togglePayloadBtn" class="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs transition">
+            <button type="button" id="togglePayloadBtn" class="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs transition cursor-pointer">
               <i data-lucide="code-2" class="w-3.5 h-3.5 text-indigo-400"></i>
               <span id="togglePayloadBtnText">عرض حزمة الربط (JSON Payload)</span>
             </button>
-            <button type="button" id="copyPayloadBtn" class="flex items-center justify-center gap-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95">
+            <button type="button" id="copyPayloadBtn" class="flex items-center justify-center gap-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer">
               <i data-lucide="copy" class="w-3.5 h-3.5"></i>
               <span>نسخ الحزمة</span>
             </button>
@@ -1006,7 +1040,7 @@
 
       <!-- Modal Footer -->
       <div class="flex justify-end pt-3 border-t border-slate-800">
-        <button type="button" id="closeJoFotaraModalBtn2" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 py-2 rounded-xl text-xs font-semibold transition text-center">
+        <button type="button" id="closeJoFotaraModalBtn2" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 py-2 rounded-xl text-xs font-semibold transition text-center cursor-pointer">
           إغلاق
         </button>
       </div>
@@ -1014,7 +1048,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20260916_v5"></script>
+  <script src="/static/app.js?v=20260916_v7"></script>
   <script>
     lucide.createIcons();
   </script>

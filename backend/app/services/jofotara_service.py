@@ -163,9 +163,39 @@ class JoFotaraService:
         return datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     @classmethod
+    def generate_readable_text(
+        cls,
+        seller_name: str,
+        tax_id: str,
+        timestamp: str,
+        total_amount: float,
+        tax_amount: float,
+        invoice_number: str = ""
+    ) -> str:
+        """
+        توليد نص عربي مقروء ومباشر لكاميرات الهواتف العادية (iPhone / Android) عند مسح الـ QR.
+        """
+        formatted_time = timestamp.replace("T", " ") if timestamp else ""
+        lines = [
+            "🧾 فاتورة ضريبية إلكترونية - الأردن",
+            f"🏢 المنشأة: {seller_name}",
+        ]
+        if tax_id and tax_id != "000000000":
+            lines.append(f"🔢 الرقم الضريبي: {tax_id}")
+        if invoice_number and invoice_number != "بدون رقم":
+            lines.append(f"📄 رقم الفاتورة: {invoice_number}")
+        lines.extend([
+            f"📅 التاريخ: {formatted_time}",
+            f"💰 الإجمالي: {float(total_amount):.3f} د.أ",
+            f"📊 ضريبة المبيعات 16%: {float(tax_amount):.3f} د.أ",
+            "✅ معتمد ومطابق لنظام الفوترة الوطني الأردني JoFotara"
+        ])
+        return "\n".join(lines)
+
+    @classmethod
     def build_transaction_qr(cls, transaction: Any, org: Any) -> Dict[str, Any]:
         """
-        بناء رمز الـ QR وتشفير TLV لفاتورة أو عملية مسجلة.
+        بناء رمز الـ QR وتشفير TLV وفورمات النص المقروء لفاتورة أو عملية مسجلة.
         """
         seller_name = getattr(org, "name", "المنشأة التجارية")
         tax_id = getattr(org, "tax_number", None) or "000000000"
@@ -175,6 +205,7 @@ class JoFotaraService:
         )
         total_amount = float(getattr(transaction, "total_amount", 0.0) or 0.0)
         tax_amount = float(getattr(transaction, "tax_amount", 0.0) or 0.0)
+        inv_number = getattr(transaction, "invoice_number", "") or ""
 
         tlv_b64 = cls.encode_tlv(
             seller_name=seller_name,
@@ -184,8 +215,18 @@ class JoFotaraService:
             tax_amount=tax_amount
         )
 
-        qr_data_uri = cls.generate_qr_data_uri(tlv_b64, box_size=6, border=2)
+        tlv_qr_data_uri = cls.generate_qr_data_uri(tlv_b64, box_size=6, border=2)
         decoded = cls.decode_tlv(tlv_b64)
+
+        readable_text = cls.generate_readable_text(
+            seller_name=seller_name,
+            tax_id=tax_id,
+            timestamp=timestamp,
+            total_amount=total_amount,
+            tax_amount=tax_amount,
+            invoice_number=inv_number
+        )
+        readable_qr_data_uri = cls.generate_qr_data_uri(readable_text, box_size=6, border=2)
 
         return {
             "transaction_id": str(getattr(transaction, "id", "")),
@@ -194,8 +235,12 @@ class JoFotaraService:
             "timestamp": timestamp,
             "total_amount": total_amount,
             "tax_amount": tax_amount,
+            "invoice_number": inv_number,
             "tlv_base64": tlv_b64,
-            "qr_data_uri": qr_data_uri,
+            "qr_data_uri": tlv_qr_data_uri,
+            "tlv_qr_data_uri": tlv_qr_data_uri,
+            "readable_text": readable_text,
+            "readable_qr_data_uri": readable_qr_data_uri,
             "decoded_info": decoded.get("decoded", {}),
             "is_compliant": bool(getattr(org, "tax_number", None) and total_amount > 0)
         }

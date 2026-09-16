@@ -253,12 +253,15 @@ def get_risk_invoices(
 @router.get("/transactions/{transaction_id}/jofotara-qr")
 def get_transaction_jofotara_qr(
     transaction_id: str,
-    format: str = Query("json", description="صيغة الاستجابة: json أو image"),
+    format: str = Query("json", description="صيغة الاستجابة: json أو png"),
+    mode: str = Query("tlv", description="نمط التشفير: tlv (المعيار الضريبي المشفر) أو readable (نص عربي مقروء بكاميرا الهاتف)"),
     db: Session = Depends(get_db)
 ):
     """
     توليد واسترجاع رمز الاستجابة السريعة (JoFotara QR Code) المعتمد للعملية أو الفاتورة.
-    يدعم إرجاع بيانات Base64 و TLV المفكوكة (JSON) أو صورة PNG مباشرة للطباعة والتنزيل.
+    يدعم نمطين:
+    1. tlv: المعيار الضريبي المعتمد لدائرة ضريبة الدخل والمبيعات ISTD المشفر بـ Base64 TLV.
+    2. readable: نص عربي مقروء فورياً عند مسحه بكاميرا أي هاتف عادي (iPhone / Android).
     """
     tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not tx:
@@ -271,11 +274,12 @@ def get_transaction_jofotara_qr(
     qr_info = JoFotaraService.build_transaction_qr(tx, org)
 
     if format in ["image", "png"]:
-        png_bytes = JoFotaraService.generate_qr_png_bytes(qr_info["tlv_base64"], box_size=8, border=2)
+        content_to_encode = qr_info["readable_text"] if mode == "readable" else qr_info["tlv_base64"]
+        png_bytes = JoFotaraService.generate_qr_png_bytes(content_to_encode, box_size=8, border=2)
         return Response(
             content=png_bytes,
             media_type="image/png",
-            headers={"Content-Disposition": f'inline; filename="jofotara_qr_{tx.id}.png"'}
+            headers={"Content-Disposition": f'inline; filename="jofotara_qr_{tx.id}_{mode}.png"'}
         )
 
     return qr_info

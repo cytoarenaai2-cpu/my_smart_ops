@@ -172,23 +172,23 @@ async function fetchRecentTransactions() {
       if (!isApproved) {
         actionHtml = `
           <div class="flex items-center justify-center gap-1.5 flex-nowrap">
-            <button onclick="openJoFotaraModal('${t.id}')"
+            <button onclick="window.openJoFotaraModal('${t.id}')"
                     title="فحص رمز الاستجابة السريعة وحزمة الفوترة الإلكترونية JoFotara"
                     class="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
-              <i data-lucide="qr-code" class="w-3.5 h-3.5"></i>
+              <i data-lucide="qr-code" class="w-3.5 h-3.5 pointer-events-none"></i>
             </button>
-            <button onclick="openReviewModal('${t.id}')" 
+            <button onclick="window.openReviewModal('${t.id}')" 
                     title="مراجعة وتعديل المبالغ وإدخال البيانات الناقصة"
                     class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 hover:border-amber-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
-              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
-              <span>مراجعة وتعديل</span>
+              <i data-lucide="edit-3" class="w-3.5 h-3.5 pointer-events-none"></i>
+              <span class="pointer-events-none">مراجعة وتعديل</span>
             </button>
             <button onclick="approveTransaction('${t.id}')" 
                     id="approve-btn-${t.id}"
                     title="اعتماد وتأكيد مطابقة العملية كما هي"
                     class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
-              <i data-lucide="check" class="w-3.5 h-3.5"></i>
-              <span>اعتماد</span>
+              <i data-lucide="check" class="w-3.5 h-3.5 pointer-events-none"></i>
+              <span class="pointer-events-none">اعتماد</span>
             </button>
           </div>
         `;
@@ -196,18 +196,18 @@ async function fetchRecentTransactions() {
         actionHtml = `
           <div class="flex items-center justify-center gap-1.5">
             <span class="inline-flex items-center gap-1 text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap">
-              <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
-              <span>معتمد</span>
+              <i data-lucide="shield-check" class="w-3.5 h-3.5 pointer-events-none"></i>
+              <span class="pointer-events-none">معتمد</span>
             </span>
-            <button onclick="openJoFotaraModal('${t.id}')"
+            <button onclick="window.openJoFotaraModal('${t.id}')"
                     title="فحص رمز الاستجابة السريعة وحزمة الفوترة الإلكترونية JoFotara"
                     class="p-1 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
-              <i data-lucide="qr-code" class="w-3.5 h-3.5"></i>
+              <i data-lucide="qr-code" class="w-3.5 h-3.5 pointer-events-none"></i>
             </button>
-            <button onclick="openReviewModal('${t.id}')"
+            <button onclick="window.openReviewModal('${t.id}')"
                     title="تعديل بيانات هذه العملية"
-                    class="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
-              <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                    class="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 transition cursor-pointer active:scale-95">
+              <i data-lucide="edit-2" class="w-3.5 h-3.5 pointer-events-none"></i>
             </button>
           </div>
         `;
@@ -241,43 +241,88 @@ async function fetchRecentTransactions() {
 }
 
 // 3.1 Open Interactive Review Modal
-window.openReviewModal = function(txId) {
-  const t = cachedTransactions.find(x => x.id === txId);
-  if (!t) return;
+window.openReviewModal = async function(txId) {
+  let t = cachedTransactions.find(x => String(x.id) === String(txId));
+  if (!t) {
+    try {
+      const res = await fetch(`/api/v1/analytics/recent-transactions`);
+      if (res.ok) {
+        cachedTransactions = await res.json();
+        t = cachedTransactions.find(x => String(x.id) === String(txId));
+      }
+    } catch (err) {
+      console.error("Error fetching transactions for review modal:", err);
+    }
+  }
+
+  if (!t) {
+    alert("تعذر العثور على بيانات العملية في السجل، يرجى إعادة تحميل الصفحة.");
+    return;
+  }
 
   const modal = document.getElementById("reviewTxModal");
   if (!modal) return;
 
-  document.getElementById("editTxId").value = t.id;
-  document.getElementById("editTxType").value = t.raw_type || "EXPENSE";
-  document.getElementById("editTxMerchant").value = t.merchant_or_branch || "";
-  document.getElementById("editTxTotal").value = Number(t.total_amount || 0).toFixed(3);
-  document.getElementById("editTxSubtotal").value = Number(t.subtotal || t.total_amount || 0).toFixed(3);
-  document.getElementById("editTxService").value = t.service_charge ? Number(t.service_charge).toFixed(3) : "0.000";
-  document.getElementById("editTxTax").value = Number(t.tax_amount || 0).toFixed(3);
-  document.getElementById("editTxTaxId").value = t.supplier_tax_id || "";
+  try {
+    const editTxIdEl = document.getElementById("editTxId");
+    if (editTxIdEl) editTxIdEl.value = t.id;
 
-  const pb = t.payment_breakdown || {};
-  document.getElementById("editTxCash").value = pb.cash !== undefined ? Number(pb.cash).toFixed(3) : Number(t.total_amount || 0).toFixed(3);
-  document.getElementById("editTxCard").value = pb.card !== undefined ? Number(pb.card).toFixed(3) : "0.000";
-  document.getElementById("editTxCliq").value = pb.cliq !== undefined ? Number(pb.cliq).toFixed(3) : "0.000";
-  document.getElementById("editTxDelivery").value = pb.delivery_apps !== undefined ? Number(pb.delivery_apps).toFixed(3) : "0.000";
+    const editTxTypeEl = document.getElementById("editTxType");
+    if (editTxTypeEl) editTxTypeEl.value = t.raw_type || "EXPENSE";
 
-  document.getElementById("editTxNotes").value = t.notes || "";
+    const editTxMerchantEl = document.getElementById("editTxMerchant");
+    if (editTxMerchantEl) editTxMerchantEl.value = t.merchant_or_branch || "";
 
-  // Populate Flags list
-  const flagsList = document.getElementById("reviewFlagsList");
-  if (t.flags && t.flags.length > 0) {
-    flagsList.innerHTML = t.flags.map(f => `<div>• ${f}</div>`).join("");
-    document.getElementById("reviewAlertBox").classList.remove("hidden");
-  } else {
-    flagsList.innerHTML = `<div>• العملية معتمدة أو لا توجد فروقات تدقيقية غير محلولة. يمكنك تعديل الحقول لتصحيح أو إعادة تصنيف المبالغ.</div>`;
-    document.getElementById("reviewAlertBox").classList.remove("hidden");
+    const editTxTotalEl = document.getElementById("editTxTotal");
+    if (editTxTotalEl) editTxTotalEl.value = Number(t.total_amount || 0).toFixed(3);
+
+    const editTxSubtotalEl = document.getElementById("editTxSubtotal");
+    if (editTxSubtotalEl) editTxSubtotalEl.value = Number(t.subtotal || t.total_amount || 0).toFixed(3);
+
+    const editTxServiceEl = document.getElementById("editTxService");
+    if (editTxServiceEl) editTxServiceEl.value = t.service_charge ? Number(t.service_charge).toFixed(3) : "0.000";
+
+    const editTxTaxEl = document.getElementById("editTxTax");
+    if (editTxTaxEl) editTxTaxEl.value = Number(t.tax_amount || 0).toFixed(3);
+
+    const editTxTaxIdEl = document.getElementById("editTxTaxId");
+    if (editTxTaxIdEl) editTxTaxIdEl.value = t.supplier_tax_id || "";
+
+    const pb = t.payment_breakdown || {};
+    const editTxCashEl = document.getElementById("editTxCash");
+    if (editTxCashEl) editTxCashEl.value = pb.cash !== undefined ? Number(pb.cash).toFixed(3) : Number(t.total_amount || 0).toFixed(3);
+
+    const editTxCardEl = document.getElementById("editTxCard");
+    if (editTxCardEl) editTxCardEl.value = pb.card !== undefined ? Number(pb.card).toFixed(3) : "0.000";
+
+    const editTxCliqEl = document.getElementById("editTxCliq");
+    if (editTxCliqEl) editTxCliqEl.value = pb.cliq !== undefined ? Number(pb.cliq).toFixed(3) : "0.000";
+
+    const editTxDeliveryEl = document.getElementById("editTxDelivery");
+    if (editTxDeliveryEl) editTxDeliveryEl.value = pb.delivery_apps !== undefined ? Number(pb.delivery_apps).toFixed(3) : "0.000";
+
+    const editTxNotesEl = document.getElementById("editTxNotes");
+    if (editTxNotesEl) editTxNotesEl.value = t.notes || "";
+
+    // Populate Flags list
+    const flagsList = document.getElementById("reviewFlagsList");
+    if (flagsList) {
+      if (t.flags && t.flags.length > 0) {
+        flagsList.innerHTML = t.flags.map(f => `<div>• ${f}</div>`).join("");
+      } else {
+        flagsList.innerHTML = `<div>• العملية معتمدة أو لا توجد فروقات تدقيقية غير محلولة. يمكنك تعديل الحقول لتصحيح أو إعادة تصنيف المبالغ.</div>`;
+      }
+    }
+    const alertBox = document.getElementById("reviewAlertBox");
+    if (alertBox) alertBox.classList.remove("hidden");
+
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+  } catch (domErr) {
+    console.error("Error populating review modal fields:", domErr);
+  } finally {
+    if (window.lucide) lucide.createIcons();
   }
-
-  modal.classList.remove("hidden");
-  modal.classList.add("flex");
-  if (window.lucide) lucide.createIcons();
 };
 
 window.closeReviewModal = function() {
@@ -362,6 +407,64 @@ function setupReviewModal() {
 // ----------------------------------------------------
 let currentJoFotaraTxId = null;
 let currentJoFotaraPayload = null;
+let currentJoFotaraQrData = null;
+let currentJoFotaraMode = "readable"; // 'readable' or 'tlv'
+
+window.closeJoFotaraModal = function() {
+  const modal = document.getElementById("jofotaraModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+};
+
+window.switchJoFotaraMode = function(mode) {
+  currentJoFotaraMode = mode;
+  const tabReadable = document.getElementById("tabQrReadable");
+  const tabTlv = document.getElementById("tabQrTlv");
+  const qrImg = document.getElementById("jofotaraQrImg");
+  const desc = document.getElementById("jofotaraModeDesc");
+  const downloadBtnText = document.getElementById("downloadQrBtnText");
+  const readableSec = document.getElementById("readableTextSection");
+  const tlvSec = document.getElementById("tlvSection");
+
+  if (mode === "readable") {
+    if (tabReadable) {
+      tabReadable.className = "flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer";
+    }
+    if (tabTlv) {
+      tabTlv.className = "flex-1 py-2 px-3 rounded-lg font-medium text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer";
+    }
+    if (qrImg && currentJoFotaraQrData) {
+      qrImg.src = currentJoFotaraQrData.readable_qr_data_uri || currentJoFotaraQrData.qr_data_uri;
+    }
+    if (desc) {
+      desc.textContent = "مسح هذا الرمز بكاميرا الهاتف العادية يظهر بيانات الفاتورة بنص عربي مقروء ومباشر";
+      desc.className = "text-[10px] text-emerald-400/90 leading-tight";
+    }
+    if (downloadBtnText) downloadBtnText.textContent = "تنزيل رمز QR المقروء (PNG)";
+    if (readableSec) readableSec.classList.remove("hidden");
+    if (tlvSec) tlvSec.classList.add("hidden");
+  } else {
+    if (tabTlv) {
+      tabTlv.className = "flex-1 py-2 px-3 rounded-lg font-bold transition flex items-center justify-center gap-1.5 bg-sky-600/30 text-sky-300 border border-sky-500/40 cursor-pointer";
+    }
+    if (tabReadable) {
+      tabReadable.className = "flex-1 py-2 px-3 rounded-lg font-medium text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer";
+    }
+    if (qrImg && currentJoFotaraQrData) {
+      qrImg.src = currentJoFotaraQrData.tlv_qr_data_uri || currentJoFotaraQrData.qr_data_uri;
+    }
+    if (desc) {
+      desc.textContent = "رمز TLV المشفر المعتمد رسمياً للربط والتدقيق لدى دائرة ضريبة الدخل والمبيعات ISTD";
+      desc.className = "text-[10px] text-sky-400/90 leading-tight";
+    }
+    if (downloadBtnText) downloadBtnText.textContent = "تنزيل رمز QR المشفر TLV (PNG)";
+    if (readableSec) readableSec.classList.add("hidden");
+    if (tlvSec) tlvSec.classList.remove("hidden");
+  }
+  if (window.lucide) lucide.createIcons();
+};
 
 function setupJoFotaraModal() {
   const modal = document.getElementById("jofotaraModal");
@@ -370,27 +473,44 @@ function setupJoFotaraModal() {
   const downloadBtn = document.getElementById("downloadJoFotaraQrBtn");
   const toggleBtn = document.getElementById("togglePayloadBtn");
   const copyBtn = document.getElementById("copyPayloadBtn");
+  const copyReadableBtn = document.getElementById("copyReadableTextBtn");
+  const tabReadable = document.getElementById("tabQrReadable");
+  const tabTlv = document.getElementById("tabQrTlv");
 
-  const closeModal = () => {
-    if (modal) {
-      modal.classList.add("hidden");
-      modal.classList.remove("flex");
-    }
-  };
+  if (closeBtn1) closeBtn1.addEventListener("click", window.closeJoFotaraModal);
+  if (closeBtn2) closeBtn2.addEventListener("click", window.closeJoFotaraModal);
 
-  if (closeBtn1) closeBtn1.addEventListener("click", closeModal);
-  if (closeBtn2) closeBtn2.addEventListener("click", closeModal);
+  if (tabReadable) {
+    tabReadable.addEventListener("click", () => window.switchJoFotaraMode("readable"));
+  }
+  if (tabTlv) {
+    tabTlv.addEventListener("click", () => window.switchJoFotaraMode("tlv"));
+  }
 
   if (modal) {
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeModal();
+      if (e.target === modal) window.closeJoFotaraModal();
     });
   }
 
   if (downloadBtn) {
     downloadBtn.addEventListener("click", () => {
       if (!currentJoFotaraTxId) return;
-      window.location.href = `/api/v1/tax/transactions/${currentJoFotaraTxId}/jofotara-qr?format=png`;
+      window.location.href = `/api/v1/tax/transactions/${currentJoFotaraTxId}/jofotara-qr?format=png&mode=${currentJoFotaraMode}`;
+    });
+  }
+
+  if (copyReadableBtn) {
+    copyReadableBtn.addEventListener("click", () => {
+      const text = document.getElementById("readableTextContent")?.textContent;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        const originalHtml = copyReadableBtn.innerHTML;
+        copyReadableBtn.innerHTML = `<span>✅ تم النسخ</span>`;
+        setTimeout(() => {
+          copyReadableBtn.innerHTML = originalHtml;
+        }, 1800);
+      });
     });
   }
 
@@ -426,7 +546,7 @@ function setupJoFotaraModal() {
   }
 }
 
-async function openJoFotaraModal(txId) {
+window.openJoFotaraModal = async function(txId) {
   currentJoFotaraTxId = txId;
   const modal = document.getElementById("jofotaraModal");
   if (!modal) return;
@@ -442,6 +562,7 @@ async function openJoFotaraModal(txId) {
   const badge = document.getElementById("jofotaraComplianceBadge");
   const section = document.getElementById("payloadViewerSection");
   const btnText = document.getElementById("togglePayloadBtnText");
+  const readableContent = document.getElementById("readableTextContent");
 
   if (section) section.classList.add("hidden");
   if (btnText) btnText.textContent = "عرض حزمة الربط (JSON Payload)";
@@ -452,6 +573,7 @@ async function openJoFotaraModal(txId) {
   if (total) total.textContent = "...";
   if (tax) tax.textContent = "...";
   if (rawTlv) rawTlv.value = "";
+  if (readableContent) readableContent.textContent = "جاري إعداد نص الفاتورة...";
   if (jsonCode) jsonCode.textContent = "جاري تحضير حزمة ISTD القياسية...";
 
   modal.classList.remove("hidden");
@@ -466,19 +588,22 @@ async function openJoFotaraModal(txId) {
 
     if (!qrRes.ok) throw new Error("تعذر جلب بيانات JoFotara للعملية");
     const qrData = await qrRes.json();
+    currentJoFotaraQrData = qrData;
     
     if (payloadRes.ok) {
       currentJoFotaraPayload = await payloadRes.json();
       if (jsonCode) jsonCode.textContent = JSON.stringify(currentJoFotaraPayload, null, 2);
     }
 
-    if (qrImg) qrImg.src = qrData.qr_data_uri;
     if (sellerName) sellerName.textContent = qrData.seller_name;
     if (taxId) taxId.textContent = qrData.tax_id || "غير مسجل ضريبياً";
     if (timestamp) timestamp.textContent = qrData.timestamp;
     if (total) total.textContent = `${Number(qrData.total_amount).toFixed(3)} د.أ`;
     if (tax) tax.textContent = `${Number(qrData.tax_amount).toFixed(3)} د.أ`;
     if (rawTlv) rawTlv.value = qrData.tlv_base64;
+    if (readableContent) readableContent.textContent = qrData.readable_text || "";
+
+    window.switchJoFotaraMode("readable");
 
     if (badge) {
       if (qrData.is_compliant) {
@@ -494,7 +619,7 @@ async function openJoFotaraModal(txId) {
   } finally {
     if (window.lucide) lucide.createIcons();
   }
-}
+};
 
 // 12. Setup Batch PDF Summary Modal & Viewer
 function setupBatchModal() {
