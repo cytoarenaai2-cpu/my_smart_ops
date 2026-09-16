@@ -1,11 +1,12 @@
 from datetime import date, timedelta
-from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.schema import Organization, Transaction, AuditFlag
 from app.services.tax_engine import JordanTaxEngine
+from app.services.pdf_report_service import PDFReportGenerator
 
 router = APIRouter(prefix="/tax", tags=["Jordan Tax & JoFotara Compliance"])
 
@@ -146,6 +147,64 @@ def get_pre_filing_report(
         transactions=txs,
         audit_flags=flags,
         period_name=computed_period
+    )
+
+
+@router.get("/pre-filing-report/pdf")
+def get_pre_filing_report_pdf(
+    organization_id: Optional[str] = Query(None),
+    period_name: Optional[str] = Query(None),
+    days: Optional[int] = Query(None, ge=1, le=3650),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    all_time: bool = Query(False),
+    db: Session = Depends(get_db)
+):
+    """
+    توليد وتنزيل ملف PDF رسمي لملف التدقيق والإقرار الضريبي الشامل بهوية المنشأة (JoFotara / ISTD).
+    """
+    org = None
+    if organization_id:
+        org = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not org:
+        org = db.query(Organization).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="لم يتم العثور على منشأة.")
+
+    txs, computed_period = _filter_tax_transactions(
+        db=db,
+        organization_id=org.id,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        all_time=all_time,
+        period_name=period_name
+    )
+
+    flags = db.query(AuditFlag).filter(
+        AuditFlag.organization_id == org.id,
+        AuditFlag.resolved == False
+    ).all()
+
+    report_data = JordanTaxEngine.generate_pre_filing_audit_report(
+        organization=org,
+        transactions=txs,
+        audit_flags=flags,
+        period_name=computed_period
+    )
+
+    pdf_bytes = PDFReportGenerator.generate_tax_report_pdf(report_data)
+
+    import urllib.parse
+    safe_period = (computed_period or "report").replace(" ", "_").replace("/", "-")
+    encoded_filename = urllib.parse.quote(f"tax_report_{safe_period}.pdf")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="tax_report.pdf"; filename*=UTF-8\'\'{encoded_filename}'
+        }
     )
 
 

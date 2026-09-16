@@ -75,6 +75,9 @@ class TelegramBotRunner:
                 [
                     {"text": "🏛️ ملخص JoFotara الضريبي", "callback_data": "tax_all"},
                     {"text": "⚠️ فحص التدقيق", "callback_data": "audit_check"}
+                ],
+                [
+                    {"text": "📄 تحميل إقرار PDF رسمي", "callback_data": "pdf_tax_all"}
                 ]
             ]
         }
@@ -88,6 +91,7 @@ class TelegramBotRunner:
             {"command": "yesterday", "description": "⏮️ تقرير مبيعات الأمس"},
             {"command": "month", "description": "📅 تقرير مبيعات الشهر الحالي"},
             {"command": "tax", "description": "🏛️ الإقرار الضريبي JoFotara"},
+            {"command": "pdf", "description": "📄 تحميل إقرار الضريبة PDF"},
             {"command": "all", "description": "📈 كشف كافة العمليات المسجلة"},
             {"command": "audit", "description": "⚠️ تنبيهات التدقيق والمطابقة"},
             {"command": "report", "description": "📑 اختيار أو طلب تقرير مخصص"},
@@ -119,6 +123,100 @@ class TelegramBotRunner:
                     await client.post(url, json=payload, headers=self.headers)
             except Exception as e:
                 print(f"[TelegramBot] send_message error: {e}")
+
+    async def send_document(
+        self,
+        chat_id: int,
+        file_bytes: bytes,
+        filename: str,
+        caption: Optional[str] = None,
+        parse_mode: str = "Markdown",
+        reply_markup: Optional[dict] = None
+    ):
+        """إرسال مستندات وملفات PDF مباشرة للمستخدم عبر تيليجرام"""
+        import json
+        url = f"{self.base_url}/sendDocument"
+        data = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+            data["parse_mode"] = parse_mode
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        files = {"document": (filename, file_bytes, "application/pdf")}
+
+        async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
+            try:
+                res = await client.post(url, data=data, files=files, headers=self.headers)
+                if res.status_code != 200:
+                    # إعادة المحاولة بدون parse_mode في حال تعذر التنسيق
+                    data.pop("parse_mode", None)
+                    await client.post(url, data=data, files=files, headers=self.headers)
+            except Exception as e:
+                print(f"[TelegramBot] send_document error: {e}", flush=True)
+
+    async def _send_tax_report_pdf(
+        self,
+        chat_id: int,
+        start_d: Optional[date] = None,
+        end_d: Optional[date] = None,
+        label: str = "كافة العمليات المسجلة",
+        all_time: bool = False
+    ):
+        """توليد ملف PDF رسمي للإقرار الضريبي وإرساله كمستند احترافي للمستخدم"""
+        from app.services.tax_engine import JordanTaxEngine
+        from app.services.pdf_report_service import PDFReportGenerator
+
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if not org:
+                await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
+                return
+
+            query = db.query(Transaction).filter(Transaction.organization_id == org.id)
+            if not all_time:
+                if start_d:
+                    query = query.filter(Transaction.transaction_date >= start_d)
+                if end_d:
+                    query = query.filter(Transaction.transaction_date <= end_d)
+
+            txs = query.order_by(Transaction.transaction_date.desc()).all()
+            flags = db.query(AuditFlag).filter(
+                AuditFlag.organization_id == org.id,
+                AuditFlag.resolved == False
+            ).all()
+
+            report_data = JordanTaxEngine.generate_pre_filing_audit_report(
+                organization=org,
+                transactions=txs,
+                audit_flags=flags,
+                period_name=label
+            )
+
+            await self.send_message(chat_id, "⏳ جاري إعداد وتوليد ملف PDF الرسمي للإقرار الضريبي...")
+            pdf_bytes = PDFReportGenerator.generate_tax_report_pdf(report_data)
+
+            caption = (
+                f"📄 *ملف التدقيق والإقرار الضريبي الرسمي (JoFotara / ISTD)*\n"
+                f"🏢 المنشأة: *{org.name}*\n"
+                f"📅 الفترة: *{label}*\n"
+                f"🎯 درجة الجاهزية: *{report_data['metadata']['compliance_score']}%*"
+            )
+
+            filename = f"JoFotara_Tax_Report_{datetime.today().strftime('%Y%m%d')}.pdf"
+            await self.send_document(
+                chat_id=chat_id,
+                file_bytes=pdf_bytes,
+                filename=filename,
+                caption=caption,
+                reply_markup=self.get_main_keyboard()
+            )
+        except Exception as e:
+            print(f"[TelegramBot] _send_tax_report_pdf error: {e}", flush=True)
+            await self.send_message(chat_id, f"❌ حدث خطأ أثناء إنشاء ملف PDF: {e}")
+        finally:
+            db.close()
 
     def _update_org_chat_id(self, chat_id: int):
         db = SessionLocal()
@@ -303,13 +401,21 @@ class TelegramBotRunner:
         """التعرف الذكي على طلبات التقارير المخصصة وتحديد الفترات والتواريخ باللغة العربية والإنجليزية"""
         t = text.strip()
         is_tax = bool(re.search(r'(ضريب|tax|jofotara|جوفاتورة|إقرار|اقرار)', t, re.IGNORECASE))
+        is_pdf = bool(re.search(r'(pdf|بي دي اف|ملف|مستند|طباعة)', t, re.IGNORECASE))
 
         # طلب تقرير عام بدون تحديد فترة
         if t in ["/report", "/تقرير", "تقرير", "ملخص", "تقرير مالي", "التقرير"]:
-            return {"kind": "interactive", "is_tax": False}
+            return {"kind": "interactive", "is_tax": False, "is_pdf": False}
 
         if t in ["/tax", "/الضريبة", "الضريبة", "تقرير الضريبة", "الإقرار الضريبي", "الاقرار الضريبي", "🏛️ الإقرار الضريبي"]:
-            return {"kind": "all", "start": None, "end": None, "is_tax": True, "label": "كافة العمليات المسجلة"}
+            return {"kind": "all", "start": None, "end": None, "is_tax": True, "is_pdf": is_pdf, "label": "كافة العمليات المسجلة"}
+
+        if t in ["/pdf", "/tax_pdf", "pdf", "بي دي اف", "تحميل pdf", "تقرير pdf", "ملف pdf", "تنزيل pdf"]:
+            return {"kind": "all", "start": None, "end": None, "is_tax": True, "is_pdf": True, "label": "كافة العمليات المسجلة"}
+
+        # فحص الطلبات العامة للضريبة أو ملفات الـ PDF دون تاريخ محدد
+        if (is_tax or is_pdf) and any(w in t for w in ['تقرير', 'ملف', 'تحميل', 'تنزيل', 'طباعة', 'استخراج', 'كشف']) and not any(k in t for k in ['202', 'شهر', 'سنة', 'عام', 'امس', 'أمس', 'اليوم']):
+            return {"kind": "all", "start": None, "end": None, "is_tax": True, "is_pdf": is_pdf, "label": "كافة العمليات المسجلة"}
 
         # 1. نمط YYYY-MM أو MM-YYYY (مثل: 2022-04 أو 04-2022 أو 2022/4)
         m_ym = re.search(r'\b(20\d\d)[-/](0?[1-9]|1[0-2])\b', t)
@@ -318,11 +424,11 @@ class TelegramBotRunner:
             if m_ym:
                 month, year = int(m_ym.group(1)), int(m_ym.group(2))
                 last_day = calendar.monthrange(year, month)[1]
-                return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'label': f'شهر {month} لسنة {year}'}
+                return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'شهر {month} لسنة {year}'}
         else:
             year, month = int(m_ym.group(1)), int(m_ym.group(2))
             last_day = calendar.monthrange(year, month)[1]
-            return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'label': f'شهر {month} لسنة {year}'}
+            return {'kind': 'month', 'year': year, 'month': month, 'start': date(year, month, 1), 'end': date(year, month, last_day), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'شهر {month} لسنة {year}'}
 
         # 2. فحص أسماء الشهور مع أو بدون سنة (مثل: شهر نيسان 2022 أو نيسان)
         m_year = re.search(r'\b(20\d\d)\b', t)
@@ -330,7 +436,7 @@ class TelegramBotRunner:
             if m_name in t:
                 year = int(m_year.group(1)) if m_year else date.today().year
                 last_day = calendar.monthrange(year, m_num)[1]
-                return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'label': f'شهر {m_name} ({year})'}
+                return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'شهر {m_name} ({year})'}
 
         # 3. فحص رقم الشهر (مثل: شهر 4 أو شهر 04)
         m_month_num = re.search(r'شهر\s*(0?[1-9]|1[0-2])\b', t)
@@ -338,28 +444,28 @@ class TelegramBotRunner:
             m_num = int(m_month_num.group(1))
             year = int(m_year.group(1)) if m_year else date.today().year
             last_day = calendar.monthrange(year, m_num)[1]
-            return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'label': f'شهر {m_num} لسنة {year}'}
+            return {'kind': 'month', 'year': year, 'month': m_num, 'start': date(year, m_num, 1), 'end': date(year, m_num, last_day), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'شهر {m_num} لسنة {year}'}
 
         # 4. فحص السنة فقط (مثل: سنة 2022، عام 2022، تقرير 2022، /report 2022)
         if (m_year and any(w in t for w in ['سنة', 'عام', 'year', 'تقرير', '/report', '/tax'])) or (m_year and len(t) <= 10):
             year = int(m_year.group(1))
-            return {'kind': 'year', 'year': year, 'start': date(year, 1, 1), 'end': date(year, 12, 31), 'is_tax': is_tax, 'label': f'سنة {year}'}
+            return {'kind': 'year', 'year': year, 'start': date(year, 1, 1), 'end': date(year, 12, 31), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'سنة {year}'}
 
         # 5. اليوم / الأمس / الشهر الحالي / كافة العمليات
         if any(w in t for w in ['/today', 'اليوم', 'تقرير اليوم', 'مبيعات اليوم', '📊 تقرير اليوم']):
-            return {'kind': 'today', 'start': date.today(), 'end': date.today(), 'is_tax': is_tax, 'label': f'اليوم ({date.today()})'}
+            return {'kind': 'today', 'start': date.today(), 'end': date.today(), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'اليوم ({date.today()})'}
 
         if any(w in t for w in ['/yesterday', 'أمس', 'امس', 'تقرير الأمس', 'مبيعات امس', '⏮️ تقرير الأمس']):
             y_date = date.today() - timedelta(days=1)
-            return {'kind': 'day', 'start': y_date, 'end': y_date, 'is_tax': is_tax, 'label': f'يوم أمس ({y_date})'}
+            return {'kind': 'day', 'start': y_date, 'end': y_date, 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'يوم أمس ({y_date})'}
 
         if any(w in t for w in ['/month', 'الشهر الحالي', 'هذا الشهر', 'تقرير الشهر', '📅 تقرير الشهر']):
             td = date.today()
             last_day = calendar.monthrange(td.year, td.month)[1]
-            return {'kind': 'month', 'year': td.year, 'month': td.month, 'start': date(td.year, td.month, 1), 'end': date(td.year, td.month, last_day), 'is_tax': is_tax, 'label': f'الشهر الحالي ({td.year}-{td.month:02d})'}
+            return {'kind': 'month', 'year': td.year, 'month': td.month, 'start': date(td.year, td.month, 1), 'end': date(td.year, td.month, last_day), 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': f'الشهر الحالي ({td.year}-{td.month:02d})'}
 
         if any(w in t for w in ['/all', 'كافة العمليات', 'جميع العمليات', 'كل الفواتير', 'كافة الفترات', '📈 كافة العمليات']):
-            return {'kind': 'all', 'start': None, 'end': None, 'is_tax': is_tax, 'label': 'كافة العمليات المسجلة'}
+            return {'kind': 'all', 'start': None, 'end': None, 'is_tax': is_tax, 'is_pdf': is_pdf, 'label': 'كافة العمليات المسجلة'}
 
         return None
 
@@ -372,12 +478,30 @@ class TelegramBotRunner:
                 "• _'تقرير شهر 4 2022'_\n"
                 "• _'تقرير سنة 2022'_\n"
                 "• _'تقرير الضريبة لسنة 2022'_\n"
+                "• _'تحميل تقرير pdf'_\n"
                 "• _/report 2022-04_"
             )
             await self.send_message(
                 chat_id, 
                 msg, 
                 reply_markup=self.get_report_inline_keyboard()
+            )
+            return
+
+        is_pdf = req.get("is_pdf", False)
+        start_d = req.get("start")
+        end_d = req.get("end")
+        label = req.get("label", "الفترة المحددة")
+        all_time = (req.get("kind") == "all")
+
+        # إذا طلب المستخدم صراحة ملف PDF
+        if is_pdf:
+            await self._send_tax_report_pdf(
+                chat_id=chat_id,
+                start_d=start_d,
+                end_d=end_d,
+                label=label,
+                all_time=all_time
             )
             return
 
@@ -389,10 +513,6 @@ class TelegramBotRunner:
                 return
 
             is_tax = req.get("is_tax", False)
-            start_d = req.get("start")
-            end_d = req.get("end")
-            label = req.get("label", "الفترة المحددة")
-            all_time = (req.get("kind") == "all")
 
             if is_tax:
                 tax_text = DailySummaryService.generate_tax_telegram_brief(
@@ -468,6 +588,8 @@ class TelegramBotRunner:
             elif data == "tax_all":
                 tax_text = DailySummaryService.generate_tax_telegram_brief(db, org.id, all_time=True)
                 await self.send_message(chat_id, tax_text, reply_markup=self.get_main_keyboard())
+            elif data == "pdf_tax_all":
+                await self._send_tax_report_pdf(chat_id, all_time=True, label="كافة العمليات المسجلة")
             elif data == "audit_check":
                 flags = db.query(AuditFlag).filter(AuditFlag.organization_id == org.id, AuditFlag.resolved == False).all()
                 if not flags:
@@ -496,6 +618,7 @@ class TelegramBotRunner:
                 "• _'تقرير شهر 4 2022'_\n"
                 "• _'تقرير سنة 2022'_\n"
                 "• _'تقرير الضريبة'_\n"
+                "• _'تحميل تقرير pdf'_\n"
                 "• _/today_ أو _/month_\n\n"
                 "📸 *تسجيل الفواتير الذاتي:*\n"
                 "أرسل صورة إغلاق كاشير، أو ملف PDF متعدد الفواتير، أو تسجيل صوتي فويس نوت لتفريغها فورياً."
@@ -524,6 +647,7 @@ class TelegramBotRunner:
                 "• `/month` - تقرير الشهر الحالي\n"
                 "• `/report` - إظهار قائمة اختيار التقارير التفاعلية\n"
                 "• `/tax` - تقرير الإقرار الضريبي الشامل\n"
+                "• `/pdf` - تحميل ملف الإقرار الضريبي الرسمي PDF\n"
                 "• `/audit` - فحص التدقيق والفروقات\n"
                 "• `/all` - كشف كافة العمليات\n\n"
                 "🗣️ *3. طلب تقارير مخصصة باللغة العربية (NLP):*\n"
