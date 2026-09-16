@@ -1,14 +1,20 @@
 from datetime import date, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.schema import Organization, Transaction, AuditFlag
+from app.models.schema import Organization, Branch, Transaction, AuditFlag
 from app.services.tax_engine import JordanTaxEngine
 from app.services.pdf_report_service import PDFReportGenerator
+from app.services.jofotara_service import JoFotaraService
 
 router = APIRouter(prefix="/tax", tags=["Jordan Tax & JoFotara Compliance"])
+
+class DecodeQRRequest(BaseModel):
+    qr_content: str
+
 
 def _filter_tax_transactions(
     db: Session,
@@ -242,3 +248,71 @@ def get_risk_invoices(
         }
         for tx in risk_txs
     ]
+
+
+@router.get("/transactions/{transaction_id}/jofotara-qr")
+def get_transaction_jofotara_qr(
+    transaction_id: str,
+    format: str = Query("json", description="صيغة الاستجابة: json أو image"),
+    db: Session = Depends(get_db)
+):
+    """
+    توليد واسترجاع رمز الاستجابة السريعة (JoFotara QR Code) المعتمد للعملية أو الفاتورة.
+    يدعم إرجاع بيانات Base64 و TLV المفكوكة (JSON) أو صورة PNG مباشرة للطباعة والتنزيل.
+    """
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="لم يتم العثور على العملية المحددة.")
+
+    org = db.query(Organization).filter(Organization.id == tx.organization_id).first()
+    if not org:
+        org = db.query(Organization).first()
+
+    qr_info = JoFotaraService.build_transaction_qr(tx, org)
+
+    if format in ["image", "png"]:
+        png_bytes = JoFotaraService.generate_qr_png_bytes(qr_info["tlv_base64"], box_size=8, border=2)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Content-Disposition": f'inline; filename="jofotara_qr_{tx.id}.png"'}
+        )
+
+    return qr_info
+
+
+@router.get("/transactions/{transaction_id}/jofotara-payload")
+def get_transaction_jofotara_payload(
+    transaction_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    توليد حزمة الفاتورة الإلكترونية الرسمية (JoFotara e-Invoice API Payload)
+    المطابقة لمواصفات الربط والتكامل مع دائرة ضريبة الدخل والمبيعات الأردنية (ISTD).
+    """
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="لم يتم العثور على العملية المحددة.")
+
+    org = db.query(Organization).filter(Organization.id == tx.organization_id).first()
+    if not org:
+        org = db.query(Organization).first()
+
+    branch = None
+    if tx.branch_id:
+        branch = db.query(Branch).filter(Branch.id == tx.branch_id).first()
+
+    return JoFotaraService.generate_einvoice_payload(tx, org, branch)
+
+
+@router.post("/jofotara/decode")
+def decode_jofotara_qr(
+    req: DecodeQRRequest
+):
+    """
+    فك تشفير وفحص أي كود JoFotara TLV Base64 والتحقق من صحة حقوله الخمسة ومطابقتها.
+    """
+    if not req.qr_content:
+        raise HTTPException(status_code=400, detail="يجب تزويد كود QR المشفر.")
+    return JoFotaraService.decode_tlv(req.qr_content)
+

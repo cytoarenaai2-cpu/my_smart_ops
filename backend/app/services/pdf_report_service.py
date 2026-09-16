@@ -14,12 +14,15 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     KeepTogether,
-    HRFlowable
+    HRFlowable,
+    Image
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+
+from app.services.jofotara_service import JoFotaraService
 
 
 class PDFReportGenerator:
@@ -134,6 +137,26 @@ class PDFReportGenerator:
             textColor=colors.HexColor("#0284c7")
         )
 
+        style_qr_caption = ParagraphStyle(
+            "QRCaption",
+            parent=styles["Normal"],
+            fontName=font_bld,
+            fontSize=7.5,
+            leading=10,
+            alignment=1,
+            textColor=colors.HexColor("#0f172a")
+        )
+
+        style_qr_sub = ParagraphStyle(
+            "QRSub",
+            parent=styles["Normal"],
+            fontName=font_reg,
+            fontSize=6.5,
+            leading=9,
+            alignment=1,
+            textColor=colors.HexColor("#0284c7")
+        )
+
         meta = report_data.get("metadata", {})
         pos = report_data.get("tax_position", {})
         rec = report_data.get("payment_reconciliation", {})
@@ -175,7 +198,7 @@ class PDFReportGenerator:
             ]
         ]
 
-        meta_table = Table(meta_data, colWidths=[270, 270])
+        meta_table = Table(meta_data, colWidths=[226, 226])
         meta_table.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), font_bld),
             ("FONTSIZE", (0, 0), (-1, -1), 8.5),
@@ -189,8 +212,39 @@ class PDFReportGenerator:
             ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ]))
-        story.append(meta_table)
+
+        # توليد كود التحقق والامتثال الرسمي لنظام JoFotara
+        report_tlv = JoFotaraService.encode_tlv(
+            seller_name=meta.get("organization_name", "المنشأة التجارية"),
+            tax_id=meta.get("tax_number", "000000000") or "000000000",
+            timestamp=datetime.today().strftime("%Y-%m-%dT12:00:00"),
+            total_amount=float(pos.get("gross_sales", 0.0) or 0.0),
+            tax_amount=float(pos.get("output_tax_collected", 0.0) or 0.0)
+        )
+        qr_bytes = JoFotaraService.generate_qr_png_bytes(report_tlv, box_size=4, border=1)
+        qr_img = Image(io.BytesIO(qr_bytes), width=66, height=66)
+
+        qr_cell = [
+            qr_img,
+            Spacer(1, 2),
+            Paragraph(cls.ar("ختم امتثال JoFotara"), style_qr_caption),
+            Paragraph(cls.ar("معتمد ومطابق"), style_qr_sub)
+        ]
+
+        header_card = Table([[qr_cell, meta_table]], colWidths=[84, 456])
+        header_card.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#f8fafc")),
+            ("BOX", (0, 0), (0, 0), 0.5, colors.HexColor("#cbd5e1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        story.append(header_card)
         story.append(Spacer(1, 12))
+
 
         # 3. جدول ملخص المبيعات وضريبة المخرجات (Sales Tax Breakdown)
         story.append(Paragraph(cls.ar("1. وعاء المبيعات وضريبة المخرجات المحصلة (16% ISTD):"), style_sec_header))

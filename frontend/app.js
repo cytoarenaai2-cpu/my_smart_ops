@@ -26,6 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupReviewModal();
   setupBatchModal();
   setupResetButton();
+  setupJoFotaraModal();
 
   const refreshBtn = document.getElementById("refreshBtn");
   if (refreshBtn) {
@@ -171,6 +172,11 @@ async function fetchRecentTransactions() {
       if (!isApproved) {
         actionHtml = `
           <div class="flex items-center justify-center gap-1.5 flex-nowrap">
+            <button onclick="openJoFotaraModal('${t.id}')"
+                    title="فحص رمز الاستجابة السريعة وحزمة الفوترة الإلكترونية JoFotara"
+                    class="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
+              <i data-lucide="qr-code" class="w-3.5 h-3.5"></i>
+            </button>
             <button onclick="openReviewModal('${t.id}')" 
                     title="مراجعة وتعديل المبالغ وإدخال البيانات الناقصة"
                     class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 hover:border-amber-500 px-2.5 py-1 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer whitespace-nowrap">
@@ -193,6 +199,11 @@ async function fetchRecentTransactions() {
               <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
               <span>معتمد</span>
             </span>
+            <button onclick="openJoFotaraModal('${t.id}')"
+                    title="فحص رمز الاستجابة السريعة وحزمة الفوترة الإلكترونية JoFotara"
+                    class="p-1 rounded-lg bg-sky-950/60 hover:bg-sky-900 text-sky-400 border border-sky-500/30 hover:border-sky-400 transition cursor-pointer active:scale-95">
+              <i data-lucide="qr-code" class="w-3.5 h-3.5"></i>
+            </button>
             <button onclick="openReviewModal('${t.id}')"
                     title="تعديل بيانات هذه العملية"
                     class="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
@@ -343,6 +354,145 @@ function setupReviewModal() {
         if (window.lucide) lucide.createIcons();
       }
     });
+  }
+}
+
+// ----------------------------------------------------
+// JoFotara QR & e-Invoice Inspector Modal Logic
+// ----------------------------------------------------
+let currentJoFotaraTxId = null;
+let currentJoFotaraPayload = null;
+
+function setupJoFotaraModal() {
+  const modal = document.getElementById("jofotaraModal");
+  const closeBtn1 = document.getElementById("closeJoFotaraModalBtn");
+  const closeBtn2 = document.getElementById("closeJoFotaraModalBtn2");
+  const downloadBtn = document.getElementById("downloadJoFotaraQrBtn");
+  const toggleBtn = document.getElementById("togglePayloadBtn");
+  const copyBtn = document.getElementById("copyPayloadBtn");
+
+  const closeModal = () => {
+    if (modal) {
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+  };
+
+  if (closeBtn1) closeBtn1.addEventListener("click", closeModal);
+  if (closeBtn2) closeBtn2.addEventListener("click", closeModal);
+
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+  }
+
+  if (downloadBtn) {
+    downloadBtn.addEventListener("click", () => {
+      if (!currentJoFotaraTxId) return;
+      window.location.href = `/api/v1/tax/transactions/${currentJoFotaraTxId}/jofotara-qr?format=png`;
+    });
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      const section = document.getElementById("payloadViewerSection");
+      const btnText = document.getElementById("togglePayloadBtnText");
+      if (section) {
+        const isHidden = section.classList.contains("hidden");
+        if (isHidden) {
+          section.classList.remove("hidden");
+          if (btnText) btnText.textContent = "إخفاء حزمة الربط (JSON Payload)";
+        } else {
+          section.classList.add("hidden");
+          if (btnText) btnText.textContent = "عرض حزمة الربط (JSON Payload)";
+        }
+      }
+    });
+  }
+
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      if (!currentJoFotaraPayload) return;
+      const text = JSON.stringify(currentJoFotaraPayload, null, 2);
+      navigator.clipboard.writeText(text).then(() => {
+        const originalHtml = copyBtn.innerHTML;
+        copyBtn.innerHTML = `<span>✅ تم النسخ</span>`;
+        setTimeout(() => {
+          copyBtn.innerHTML = originalHtml;
+        }, 1800);
+      });
+    });
+  }
+}
+
+async function openJoFotaraModal(txId) {
+  currentJoFotaraTxId = txId;
+  const modal = document.getElementById("jofotaraModal");
+  if (!modal) return;
+
+  const qrImg = document.getElementById("jofotaraQrImg");
+  const sellerName = document.getElementById("jofotaraSellerName");
+  const taxId = document.getElementById("jofotaraTaxId");
+  const timestamp = document.getElementById("jofotaraTimestamp");
+  const total = document.getElementById("jofotaraTotal");
+  const tax = document.getElementById("jofotaraTax");
+  const rawTlv = document.getElementById("jofotaraTlvRaw");
+  const jsonCode = document.getElementById("jofotaraJsonCode");
+  const badge = document.getElementById("jofotaraComplianceBadge");
+  const section = document.getElementById("payloadViewerSection");
+  const btnText = document.getElementById("togglePayloadBtnText");
+
+  if (section) section.classList.add("hidden");
+  if (btnText) btnText.textContent = "عرض حزمة الربط (JSON Payload)";
+
+  if (sellerName) sellerName.textContent = "جاري التحميل...";
+  if (taxId) taxId.textContent = "...";
+  if (timestamp) timestamp.textContent = "...";
+  if (total) total.textContent = "...";
+  if (tax) tax.textContent = "...";
+  if (rawTlv) rawTlv.value = "";
+  if (jsonCode) jsonCode.textContent = "جاري تحضير حزمة ISTD القياسية...";
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const [qrRes, payloadRes] = await Promise.all([
+      fetch(`/api/v1/tax/transactions/${txId}/jofotara-qr`),
+      fetch(`/api/v1/tax/transactions/${txId}/jofotara-payload`)
+    ]);
+
+    if (!qrRes.ok) throw new Error("تعذر جلب بيانات JoFotara للعملية");
+    const qrData = await qrRes.json();
+    
+    if (payloadRes.ok) {
+      currentJoFotaraPayload = await payloadRes.json();
+      if (jsonCode) jsonCode.textContent = JSON.stringify(currentJoFotaraPayload, null, 2);
+    }
+
+    if (qrImg) qrImg.src = qrData.qr_data_uri;
+    if (sellerName) sellerName.textContent = qrData.seller_name;
+    if (taxId) taxId.textContent = qrData.tax_id || "غير مسجل ضريبياً";
+    if (timestamp) timestamp.textContent = qrData.timestamp;
+    if (total) total.textContent = `${Number(qrData.total_amount).toFixed(3)} د.أ`;
+    if (tax) tax.textContent = `${Number(qrData.tax_amount).toFixed(3)} د.أ`;
+    if (rawTlv) rawTlv.value = qrData.tlv_base64;
+
+    if (badge) {
+      if (qrData.is_compliant) {
+        badge.className = "inline-flex items-center gap-1 text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold";
+        badge.innerHTML = `<i data-lucide="check-circle" class="w-3 h-3"></i><span>معتمد ومطابق للمعايير 2025</span>`;
+      } else {
+        badge.className = "inline-flex items-center gap-1 text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-semibold";
+        badge.innerHTML = `<i data-lucide="alert-triangle" class="w-3 h-3"></i><span>بيانات ناقصة (رقم ضريبي)</span>`;
+      }
+    }
+  } catch (err) {
+    if (sellerName) sellerName.textContent = `خطأ: ${err.message}`;
+  } finally {
+    if (window.lucide) lucide.createIcons();
   }
 }
 

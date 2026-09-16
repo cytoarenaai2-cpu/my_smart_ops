@@ -50,8 +50,8 @@ class TelegramBotRunner:
             "keyboard": [
                 [{"text": "📊 تقرير اليوم"}, {"text": "📅 تقرير الشهر"}],
                 [{"text": "🏛️ الإقرار الضريبي"}, {"text": "📄 تحميل إقرار PDF"}],
-                [{"text": "📈 كافة العمليات"}, {"text": "⚠️ تنبيهات التدقيق"}],
-                [{"text": "❓ مساعدة وأوامر"}]
+                [{"text": "🏷️ رمز JoFotara QR"}, {"text": "⚠️ تنبيهات التدقيق"}],
+                [{"text": "📈 كافة العمليات"}, {"text": "❓ مساعدة وأوامر"}]
             ],
             "resize_keyboard": True,
             "is_persistent": True
@@ -75,9 +75,10 @@ class TelegramBotRunner:
                 ],
                 [
                     {"text": "🏛️ ملخص JoFotara الضريبي", "callback_data": "tax_all"},
-                    {"text": "⚠️ فحص التدقيق", "callback_data": "audit_check"}
+                    {"text": "🏷️ رمز JoFotara QR", "callback_data": "qr_latest"}
                 ],
                 [
+                    {"text": "⚠️ فحص التدقيق", "callback_data": "audit_check"},
                     {"text": "📄 تحميل إقرار PDF رسمي", "callback_data": "pdf_tax_all"}
                 ]
             ]
@@ -93,6 +94,7 @@ class TelegramBotRunner:
             {"command": "month", "description": "📅 تقرير مبيعات الشهر الحالي"},
             {"command": "tax", "description": "🏛️ الإقرار الضريبي JoFotara"},
             {"command": "pdf", "description": "📄 تحميل إقرار الضريبة PDF"},
+            {"command": "qr", "description": "🏷️ رمز الفاتورة JoFotara QR"},
             {"command": "all", "description": "📈 كشف كافة العمليات المسجلة"},
             {"command": "audit", "description": "⚠️ تنبيهات التدقيق والمطابقة"},
             {"command": "report", "description": "📑 اختيار أو طلب تقرير مخصص"},
@@ -155,6 +157,88 @@ class TelegramBotRunner:
                     await client.post(url, data=data, files=files, headers=self.headers)
             except Exception as e:
                 print(f"[TelegramBot] send_document error: {e}", flush=True)
+
+    async def send_photo(
+        self,
+        chat_id: int,
+        photo_bytes: bytes,
+        filename: str = "jofotara_qr.png",
+        caption: Optional[str] = None,
+        parse_mode: str = "Markdown",
+        reply_markup: Optional[dict] = None
+    ):
+        """إرسال صور ورسومات QR عبر تيليجرام مباشرة"""
+        import json
+        url = f"{self.base_url}/sendPhoto"
+        data = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+            data["parse_mode"] = parse_mode
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        files = {"photo": (filename, photo_bytes, "image/png")}
+
+        async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
+            try:
+                res = await client.post(url, data=data, files=files, headers=self.headers)
+                if res.status_code != 200:
+                    data.pop("parse_mode", None)
+                    await client.post(url, data=data, files=files, headers=self.headers)
+            except Exception as e:
+                print(f"[TelegramBot] send_photo error: {e}", flush=True)
+
+    async def _send_jofotara_qr(self, chat_id: int):
+        """توليد وإرسال رمز الاستجابة السريعة JoFotara المعتمد لأحدث فاتورة مسجلة"""
+        from app.services.jofotara_service import JoFotaraService
+        db = SessionLocal()
+        try:
+            org = db.query(Organization).first()
+            if not org:
+                await self.send_message(chat_id, "⚠️ لم يتم العثور على منشأة مسجلة.")
+                return
+
+            tx = db.query(Transaction).filter(
+                Transaction.organization_id == org.id
+            ).order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc()).first()
+
+            if not tx:
+                await self.send_message(chat_id, "ℹ️ لا توجد أي عمليات مسجلة حتى الآن لتوليد رمز JoFotara لها.")
+                return
+
+            qr_info = JoFotaraService.build_transaction_qr(tx, org)
+            png_bytes = JoFotaraService.generate_qr_png_bytes(qr_info["tlv_base64"], box_size=8, border=2)
+
+            caption = (
+                "🏷️ *رمز التحقق المعتمد - JoFotara QR Code*\n"
+                "─────────────────────────────\n"
+                f"🏛️ *المنشأة:* {org.name}\n"
+                f"🔢 *الرقم الضريبي:* `{org.tax_number or 'غير مسجل'}`\n"
+                f"🧾 *رقم الفاتورة:* `{tx.invoice_number or tx.id[:8]}`\n"
+                f"📅 *التاريخ:* `{tx.transaction_date}`\n"
+                f"💰 *المبلغ الإجمالي:* `{tx.total_amount:.3f} د.أ`\n"
+                f"📊 *ضريبة المبيعات 16%:* `{tx.tax_amount:.3f} د.أ`\n"
+                "─────────────────────────────\n"
+                "✅ *مشفر بهيكل TLV المعتمد رسمياً لدى دائرة ضريبة الدخل والمبيعات الأردنية (ISTD 2025)*."
+            )
+
+            await self.send_photo(
+                chat_id=chat_id,
+                photo_bytes=png_bytes,
+                filename=f"JoFotara_QR_{tx.id[:8]}.png",
+                caption=caption,
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "📄 تحميل إقرار PDF رسمي", "callback_data": "pdf_tax_all"}],
+                        [{"text": "📊 ملخص مبيعات اليوم", "callback_data": "rep_today"}]
+                    ]
+                }
+            )
+        except Exception as e:
+            print(f"[TelegramBot] _send_jofotara_qr error: {e}", flush=True)
+            await self.send_message(chat_id, f"❌ حدث خطأ أثناء توليد رمز JoFotara: {str(e)}")
+        finally:
+            db.close()
 
     async def _send_tax_report_pdf(
         self,
@@ -591,6 +675,8 @@ class TelegramBotRunner:
                 await self.send_message(chat_id, tax_text, reply_markup=self.get_main_keyboard())
             elif data == "pdf_tax_all":
                 await self._send_tax_report_pdf(chat_id, all_time=True, label="كافة العمليات المسجلة")
+            elif data == "qr_latest":
+                await self._send_jofotara_qr(chat_id)
             elif data == "audit_check":
                 flags = db.query(AuditFlag).filter(AuditFlag.organization_id == org.id, AuditFlag.resolved == False).all()
                 if not flags:
@@ -613,14 +699,14 @@ class TelegramBotRunner:
                 "👋 *أهلاً بك في نظام الإدارة المالية والتدقيق الذكي!*\n\n"
                 "هذا البوت يمنحك تحكماً مالياً وضريبياً كاملاً لعمليات منشأتك عبر تيليجرام:\n\n"
                 "📊 *لوحة الأزرار السريعة:*\n"
-                "تجد أسفل الشاشة 6 أزرار جاهزة تمكنك من طلب أي تقرير بضغطة زر دون كتابة.\n\n"
+                "تجد أسفل الشاشة أزراراً جاهزة تمكنك من طلب أي تقرير أو رمز JoFotara بضغطة زر دون كتابة.\n\n"
                 "🎯 *تخصيص التقارير الذكي باللغة الطبيعية:*\n"
                 "اكتب أي فترة تريدها وسيفهمها النظام فوراً، مثلاً:\n"
                 "• _'تقرير شهر 4 2022'_\n"
                 "• _'تقرير سنة 2022'_\n"
                 "• _'تقرير الضريبة'_\n"
                 "• _'تحميل تقرير pdf'_\n"
-                "• _/today_ أو _/month_\n\n"
+                "• _/today_ أو _/month_ أو _/qr_\n\n"
                 "📸 *تسجيل الفواتير الذاتي:*\n"
                 "أرسل صورة إغلاق كاشير، أو ملف PDF متعدد الفواتير، أو تسجيل صوتي فويس نوت لتفريغها فورياً."
             )
@@ -640,7 +726,15 @@ class TelegramBotRunner:
             await self._send_tax_report_pdf(chat_id, all_time=True, label="كافة العمليات المسجلة")
             return
 
-        # 3. دليل المساعدة والتعليمات للعملاء
+        # 3. أوامر توليد واستعراض رمز الاستجابة السريعة JoFotara QR
+        if text_clean in [
+            "/qr", "qr", "QR", "باركود", "رمز qr", "رمز الفاتورة", "باركود الفاتورة",
+            "🏷️ رمز JoFotara QR", "رمز jofotara qr", "كود qr", "كود الفوترة", "jofotara", "فاتورة qr"
+        ]:
+            await self._send_jofotara_qr(chat_id)
+            return
+
+        # 4. دليل المساعدة والتعليمات للعملاء
         if text_clean in ["/help", "مساعدة", "تعليمات", "اوامر", "أوامر", "❓ مساعدة وأوامر"]:
             guide = (
                 "📖 *دليل أوامر واختصارات البوت الذكي (Shortcuts & Commands)*\n"
@@ -650,6 +744,7 @@ class TelegramBotRunner:
                 "• *📅 تقرير الشهر:* ملخص أعمال الشهر الحالي.\n"
                 "• *🏛️ الإقرار الضريبي:* احتساب ضريبة المبيعات ومطابقة JoFotara.\n"
                 "• *📄 تحميل إقرار PDF:* استخراج وتنزيل ملف PDF رسمي فوري.\n"
+                "• *🏷️ رمز JoFotara QR:* استخراج وتوليد باركود الفوترة الإلكترونية المعتمد.\n"
                 "• *📈 كافة العمليات:* التقرير الإجمالي الشامل لكافة الفواتير.\n"
                 "• *⚠️ تنبيهات التدقيق:* كشف أي فروقات في الصندوق أو الفواتير المعلقة.\n\n"
                 "⌨️ *2. أوامر السلاش (Slash Commands):*\n"
@@ -659,6 +754,7 @@ class TelegramBotRunner:
                 "• `/report` - إظهار قائمة اختيار التقارير التفاعلية\n"
                 "• `/tax` - تقرير الإقرار الضريبي الشامل\n"
                 "• `/pdf` - تحميل ملف الإقرار الضريبي الرسمي PDF\n"
+                "• `/qr` - رمز الفاتورة الإلكترونية JoFotara QR\n"
                 "• `/audit` - فحص التدقيق والفروقات\n"
                 "• `/all` - كشف كافة العمليات\n\n"
                 "🗣️ *3. طلب تقارير مخصصة باللغة العربية (NLP):*\n"

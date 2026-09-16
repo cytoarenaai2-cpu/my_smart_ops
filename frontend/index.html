@@ -902,11 +902,122 @@
       </div>
 
     </div>
+  <!-- JoFotara QR & e-Invoice Inspector Modal -->
+  <div id="jofotaraModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl p-4 sm:p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto custom-scrollbar">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="qr-code" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <span>فحص واعتماد الفاتورة الإلكترونية الأردنية</span>
+              <span class="text-[11px] bg-sky-500/20 text-sky-300 px-2 py-0.5 rounded border border-sky-500/30">JoFotara 2025</span>
+            </h3>
+            <p class="text-[11px] sm:text-xs text-slate-400">تشفير TLV المعتمد ومطابقة حزم دائرة ضريبة الدخل والمبيعات (ISTD)</p>
+          </div>
+        </div>
+        <button type="button" id="closeJoFotaraModalBtn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Main Content Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <!-- Left: QR Code Preview Card -->
+        <div class="sm:col-span-1 bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-col items-center justify-between text-center space-y-3">
+          <div class="bg-white p-2.5 rounded-xl shadow-lg shadow-black/40">
+            <img id="jofotaraQrImg" src="" alt="JoFotara QR Code" class="w-40 h-40 object-contain" />
+          </div>
+          
+          <div class="space-y-1">
+            <span id="jofotaraComplianceBadge" class="inline-flex items-center gap-1 text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
+              <i data-lucide="check-circle" class="w-3 h-3"></i>
+              <span>معتمد ومطابق للمعايير</span>
+            </span>
+            <p class="text-[10px] text-slate-400">قابل للمسح بكاميرا الهاتف أو أجهزة قراءة الفوترة الضريبية</p>
+          </div>
+
+          <button type="button" id="downloadJoFotaraQrBtn" class="w-full flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>تنزيل رمز QR (PNG)</span>
+          </button>
+        </div>
+
+        <!-- Right: Decoded TLV Details -->
+        <div class="sm:col-span-2 space-y-2.5 text-xs">
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span class="text-slate-400 font-medium">1. اسم المنشأة (البائع):</span>
+              <span id="jofotaraSellerName" class="font-bold text-white"></span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span class="text-slate-400 font-medium">2. الرقم الضريبي (TIN):</span>
+              <span id="jofotaraTaxId" class="font-mono font-bold text-sky-400"></span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span class="text-slate-400 font-medium">3. تاريخ ووقت الفاتورة:</span>
+              <span id="jofotaraTimestamp" class="font-mono text-slate-200"></span>
+            </div>
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span class="text-slate-400 font-medium">4. الإجمالي شاملاً الضريبة:</span>
+              <span id="jofotaraTotal" class="font-mono font-bold text-emerald-400 text-sm"></span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-slate-400 font-medium">5. مبلغ ضريبة المبيعات 16%:</span>
+              <span id="jofotaraTax" class="font-mono font-bold text-sky-300"></span>
+            </div>
+          </div>
+
+          <!-- Raw TLV Base64 String -->
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5">
+            <span class="text-[10px] text-slate-400 block mb-1 font-mono">سلسلة TLV Base64 القياسية (ISTD QR String):</span>
+            <input type="text" id="jofotaraTlvRaw" readonly class="w-full bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-300 px-2 py-1 rounded focus:outline-none cursor-pointer" title="انقر للنسخ" onclick="this.select(); navigator.clipboard.writeText(this.value);" />
+          </div>
+
+          <!-- Action buttons for payload -->
+          <div class="flex items-center gap-2 pt-1">
+            <button type="button" id="togglePayloadBtn" class="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs transition">
+              <i data-lucide="code-2" class="w-3.5 h-3.5 text-indigo-400"></i>
+              <span id="togglePayloadBtnText">عرض حزمة الربط (JSON Payload)</span>
+            </button>
+            <button type="button" id="copyPayloadBtn" class="flex items-center justify-center gap-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/40 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              <span>نسخ الحزمة</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Expandable JSON Payload Viewer -->
+      <div id="payloadViewerSection" class="hidden space-y-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-bold text-indigo-300 flex items-center gap-1">
+            <i data-lucide="braces" class="w-3.5 h-3.5"></i>
+            <span>حزمة الفوترة الرقمية الكاملة (JoFotara Integration Schema):</span>
+          </span>
+          <span class="text-[10px] text-slate-500 font-mono">UBL 2.1 / ISTD Compliant</span>
+        </div>
+        <pre id="jofotaraJsonCode" class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] font-mono text-slate-300 overflow-x-auto max-h-48 custom-scrollbar"></pre>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex justify-end pt-3 border-t border-slate-800">
+        <button type="button" id="closeJoFotaraModalBtn2" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 py-2 rounded-xl text-xs font-semibold transition text-center">
+          إغلاق
+        </button>
+      </div>
+
+    </div>
   </div>
 
-  <script src="/static/app.js?v=20260916_v4"></script>
+  <script src="/static/app.js?v=20260916_v5"></script>
   <script>
     lucide.createIcons();
   </script>
 </body>
 </html>
+
