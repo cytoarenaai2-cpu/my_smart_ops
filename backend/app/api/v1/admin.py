@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.database import get_db
-from app.models.schema import User, Organization, Branch, Transaction, SubscriptionPlan, UserRoleEnum
+from app.models.schema import (
+    User, Organization, Branch, Transaction, SubscriptionPlan, 
+    UserRoleEnum, PlatformSupportContact
+)
 from app.core.security import (
     hash_password,
     verify_password,
@@ -56,18 +59,18 @@ class CreateOrgRequest(BaseModel):
     industry_type: str = "retail"
     tax_number: Optional[str] = None
     currency: str = "JOD"
-    branches: List[str] = []
+    admin_username: str
+    admin_password: str
+    admin_full_name: str
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     auto_daily_brief_enabled: bool = True
     daily_brief_time: str = "08:30"
-    admin_username: str
-    admin_password: str
-    admin_full_name: str
+    branches: Optional[List[str]] = None
     # Phase 4 SaaS Subscription fields
-    subscription_plan: str = "PRO"  # TRIAL, BASIC, PRO, ENTERPRISE
+    subscription_plan: str = "PRO"
     subscription_duration_months: int = 12
-    subscription_price_jod: float = 49.0
+    subscription_price_jod: float = 0.0
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
 
@@ -106,6 +109,21 @@ class AdminProfileUpdateRequest(BaseModel):
     email: Optional[str] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
+    # Support contact settings
+    support_phone: Optional[str] = None
+    support_whatsapp: Optional[str] = None
+    support_email: Optional[str] = None
+    working_hours: Optional[str] = None
+    support_notes: Optional[str] = None
+
+
+class SupportContactUpdateRequest(BaseModel):
+    support_phone: Optional[str] = None
+    support_whatsapp: Optional[str] = None
+    support_email: Optional[str] = None
+    working_hours: Optional[str] = None
+    support_notes: Optional[str] = None
+    is_active: Optional[bool] = True
 
 
 class DirectResetPasswordRequest(BaseModel):
@@ -704,11 +722,34 @@ def update_admin_profile(
             )
         current_admin.hashed_password = hash_password(req.new_password)
 
+    # Update Support Contact if any fields are provided
+    if any([
+        req.support_phone is not None,
+        req.support_whatsapp is not None,
+        req.support_email is not None,
+        req.working_hours is not None,
+        req.support_notes is not None
+    ]):
+        contact = db.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
+        if not contact:
+            contact = PlatformSupportContact(id="default")
+            db.add(contact)
+        if req.support_phone is not None:
+            contact.support_phone = req.support_phone.strip() if req.support_phone.strip() else None
+        if req.support_whatsapp is not None:
+            contact.support_whatsapp = req.support_whatsapp.strip() if req.support_whatsapp.strip() else None
+        if req.support_email is not None:
+            contact.support_email = req.support_email.strip() if req.support_email.strip() else None
+        if req.working_hours is not None:
+            contact.working_hours = req.working_hours.strip() if req.working_hours.strip() else None
+        if req.support_notes is not None:
+            contact.support_notes = req.support_notes.strip() if req.support_notes.strip() else None
+
     db.commit()
     db.refresh(current_admin)
 
     return {
-        "message": "تم تحديث بيانات حساب مالك المنصة بنجاح!",
+        "message": "تم تحديث بيانات حساب مالك المنصة وقنوات الدعم بنجاح!",
         "user": {
             "id": current_admin.id,
             "username": current_admin.username,
@@ -717,6 +758,88 @@ def update_admin_profile(
             "role": current_admin.role
         }
     }
+
+
+@router.get("/support-contact")
+def get_admin_support_contact(
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    استرجاع إعدادات قنوات الدعم الفني الحالية للمنصة لمالك المنصة.
+    """
+    contact = db.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
+    if not contact:
+        contact = PlatformSupportContact(
+            id="default",
+            support_phone="+962 7 9000 0000",
+            support_whatsapp="962790000000",
+            support_email="support@smartops.jo",
+            working_hours="يومياً من 9:00 صباحاً حتى 10:00 مساءً",
+            support_notes="فريق الدعم الفني جاهز لمساعدتكم في استعادة الحساب وتأكيد بيانات المنشأة عبر واتساب أو الهاتف.",
+            is_active=True
+        )
+        db.add(contact)
+        db.commit()
+        db.refresh(contact)
+
+    return {
+        "support_phone": contact.support_phone or "",
+        "support_whatsapp": contact.support_whatsapp or "",
+        "support_email": contact.support_email or "",
+        "working_hours": contact.working_hours or "",
+        "support_notes": contact.support_notes or "",
+        "is_active": contact.is_active
+    }
+
+
+@router.put("/support-contact")
+def update_admin_support_contact(
+    req: SupportContactUpdateRequest,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    تحديث قنوات الدعم الفني المعتمدة للمنصة (هاتف، واتساب، بريد إلكتروني، ساعات العمل وملاحظات المساعدة).
+    """
+    contact = db.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
+    if not contact:
+        contact = PlatformSupportContact(id="default")
+        db.add(contact)
+
+    if req.support_phone is not None:
+        contact.support_phone = req.support_phone.strip() if req.support_phone.strip() else None
+
+    if req.support_whatsapp is not None:
+        contact.support_whatsapp = req.support_whatsapp.strip() if req.support_whatsapp.strip() else None
+
+    if req.support_email is not None:
+        contact.support_email = req.support_email.strip() if req.support_email.strip() else None
+
+    if req.working_hours is not None:
+        contact.working_hours = req.working_hours.strip() if req.working_hours.strip() else None
+
+    if req.support_notes is not None:
+        contact.support_notes = req.support_notes.strip() if req.support_notes.strip() else None
+
+    if req.is_active is not None:
+        contact.is_active = req.is_active
+
+    db.commit()
+    db.refresh(contact)
+
+    return {
+        "message": "تم تحديث قنوات الدعم الفني والتواصل المعتمدة للمنصة بنجاح!",
+        "contact": {
+            "support_phone": contact.support_phone,
+            "support_whatsapp": contact.support_whatsapp,
+            "support_email": contact.support_email,
+            "working_hours": contact.working_hours,
+            "support_notes": contact.support_notes,
+            "is_active": contact.is_active
+        }
+    }
+
 
 
 @router.post("/users/{user_id}/reset-password")

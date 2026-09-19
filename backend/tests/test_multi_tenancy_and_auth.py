@@ -192,50 +192,69 @@ def test_login_with_email_success():
     assert data["user"]["email"] == "owner_a@testcompany.com"
 
 
-def test_forgot_password_flow():
-    """التحقق من مسار استعادة الحساب ونسيان كلمة المرور عبر الإيميل أو اسم المستخدم"""
+def test_support_contact_and_recovery_flow():
+    """التحقق من منظومة قنوات الدعم الفني وتحديثها واستعادة الحساب عبر مالك المنصة"""
+    # 1. فحص النقطة العامة لجلب قنوات الدعم المتاحة لشاشة تسجيل الدخول
+    res_public = client.get("/api/v1/auth/support-contact")
+    assert res_public.status_code == 200
+    pub_data = res_public.json()
+    assert "support_phone" in pub_data
+    assert "support_whatsapp" in pub_data
+    assert "support_email" in pub_data
+
+    # 2. مالك المنصة يحدث قنوات الدعم الفني
+    login_sa = client.post("/api/v1/auth/login", json={"username": "test_superadmin", "password": "SuperSecret123!"})
+    sa_token = login_sa.json()["access_token"]
+    sa_headers = {"Authorization": f"Bearer {sa_token}"}
+
+    update_res = client.put("/api/v1/admin/support-contact", headers=sa_headers, json={
+        "support_phone": "+962 7 9999 1111",
+        "support_whatsapp": "962799991111",
+        "support_email": "custom_support@platform.jo",
+        "working_hours": "على مدار الساعة 24/7",
+        "support_notes": "دعم فني واستعادة فورية لكلمات المرور"
+    })
+    assert update_res.status_code == 200
+    assert update_res.json()["contact"]["support_whatsapp"] == "962799991111"
+
+    # 3. التحقق من انعكاس التحديث على النقطة العامة لشاشة الدخول
+    res_public_after = client.get("/api/v1/auth/support-contact")
+    assert res_public_after.status_code == 200
+    assert res_public_after.json()["support_whatsapp"] == "962799991111"
+    assert res_public_after.json()["support_phone"] == "+962 7 9999 1111"
+
+    # 4. منع المستخدم العادي من تعديل قنوات الدعم
+    login_user = client.post("/api/v1/auth/login", json={"username": "admin_org_a", "password": "PassA@123"})
+    user_token = login_user.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+
+    res_blocked = client.put("/api/v1/admin/support-contact", headers=user_headers, json={
+        "support_phone": "+962 7 0000 0000"
+    })
+    assert res_blocked.status_code == 403
+
+    # 5. استعادة الحساب الآمنة: مالك المنصة يولد رابط إعادة تعيين 24 ساعة للمستخدم بعد التواصل
     db = SessionLocal()
     try:
-        tester = db.query(User).filter(User.username == "forgot_tester_user").first()
-        if not tester:
-            tester = User(
-                username="forgot_tester_user",
-                email="forgot_tester@platform.local",
-                full_name="Forgot Tester",
-                hashed_password=hash_password("OldPass@123"),
-                role=UserRoleEnum.CASHIER,
-                is_active=True
-            )
-            db.add(tester)
-        else:
-            tester.hashed_password = hash_password("OldPass@123")
-            tester.email = "forgot_tester@platform.local"
-        db.commit()
+        user_to_reset = db.query(User).filter(User.username == "admin_org_a").first()
+        user_id = user_to_reset.id
     finally:
         db.close()
 
-    # 1. طلب الاستعادة بمعرف غير موجود
-    res_fail = client.post("/api/v1/auth/forgot-password", json={"identifier": "nonexistent_user_999@test.com"})
-    assert res_fail.status_code == 200
-    assert res_fail.json()["success"] is False
+    res_link = client.post(f"/api/v1/admin/users/{user_id}/generate-reset-link", headers=sa_headers)
+    assert res_link.status_code == 200
+    link_data = res_link.json()
+    assert "reset_token" in link_data
+    token = link_data["reset_token"]
 
-    # 2. طلب الاستعادة ببريد مستخدم مسجل
-    res_ok = client.post("/api/v1/auth/forgot-password", json={"identifier": "forgot_tester@platform.local"})
-    assert res_ok.status_code == 200
-    data = res_ok.json()
-    assert data["success"] is True
-    assert data["username"] == "forgot_tester_user"
-    assert "reset_token" in data
-    token = data["reset_token"]
-
-    # 3. استخدام الرمز لتعيين كلمة مرور جديدة
-    res_reset = client.post("/api/v1/auth/reset-password", json={"token": token, "new_password": "NewSecretPass@2026"})
+    # 6. استخدام الرمز المشفر لإعادة تعيين كلمة المرور
+    res_reset = client.post("/api/v1/auth/reset-password", json={"token": token, "new_password": "NewVerifiedPass@2026"})
     assert res_reset.status_code == 200
-    assert "بنجاح" in res_reset.json()["message"]
 
-    # 4. تسجيل الدخول بكلمة المرور الجديدة عبر الإيميل
-    res_login = client.post("/api/v1/auth/login", json={"username": "forgot_tester@platform.local", "password": "NewSecretPass@2026"})
-    assert res_login.status_code == 200
-    assert "access_token" in res_login.json()
+    # 7. تسجيل الدخول بكلمة المرور الجديدة
+    res_new_login = client.post("/api/v1/auth/login", json={"username": "admin_org_a", "password": "NewVerifiedPass@2026"})
+    assert res_new_login.status_code == 200
+    assert "access_token" in res_new_login.json()
+
 
 

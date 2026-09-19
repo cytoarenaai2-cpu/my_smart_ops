@@ -128,6 +128,24 @@ def init_db():
         except Exception:
             db_session.rollback()
 
+        from app.models.schema import PlatformSupportContact
+        try:
+            contact = db_session.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
+            if not contact:
+                contact = PlatformSupportContact(
+                    id="default",
+                    support_phone="+962 7 9000 0000",
+                    support_whatsapp="962790000000",
+                    support_email="support@smartops.jo",
+                    working_hours="يومياً من 9:00 صباحاً حتى 10:00 مساءً",
+                    support_notes="فريق الدعم الفني جاهز لمساعدتكم في استعادة الحساب وتأكيد بيانات المنشأة عبر واتساب أو الهاتف.",
+                    is_active=True
+                )
+                db_session.add(contact)
+                db_session.commit()
+        except Exception:
+            db_session.rollback()
+
 def get_db():
     db = SessionLocal()
     try:

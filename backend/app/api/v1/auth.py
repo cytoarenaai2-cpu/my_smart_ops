@@ -254,66 +254,57 @@ def reset_password_with_token(
     }
 
 
+@router.get("/support-contact")
+def get_public_support_contact(db: Session = Depends(get_db)):
+    """
+    استرجاع قنوات وبيانات التواصل والدعم الفني المعتمدة للمنصة (هاتف، واتساب، إيميل، وساعات العمل).
+    متاحة للعامة لإظهارها لشاشات تسجيل الدخول وطلب المساعدة.
+    """
+    from app.models.schema import PlatformSupportContact
+    contact = db.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
+    if not contact:
+        return {
+            "support_phone": "+962 7 9000 0000",
+            "support_whatsapp": "962790000000",
+            "support_email": "support@smartops.jo",
+            "working_hours": "يومياً من 9:00 صباحاً حتى 10:00 مساءً",
+            "support_notes": "فريق الدعم الفني جاهز لمساعدتكم في استعادة الحساب وتأكيد بيانات المنشأة عبر واتساب أو الهاتف.",
+            "is_active": True
+        }
+
+    return {
+        "support_phone": contact.support_phone if contact.is_active else None,
+        "support_whatsapp": contact.support_whatsapp if contact.is_active else None,
+        "support_email": contact.support_email if contact.is_active else None,
+        "working_hours": contact.working_hours if contact.is_active else None,
+        "support_notes": contact.support_notes if contact.is_active else None,
+        "is_active": contact.is_active
+    }
+
+
 class ForgotPasswordRequest(BaseModel):
     identifier: str
 
 
 @router.post("/forgot-password")
-def forgot_password(
+def forgot_password_inquiry(
     req: ForgotPasswordRequest,
     db: Session = Depends(get_db)
 ):
     """
-    استعادة الحساب أو تعيين كلمة مرور جديدة للمستخدم أو المنشأة في حال نسيان البيانات.
-    يقبل البريد الإلكتروني أو اسم المستخدم.
+    توجيه المستخدم لقنوات الدعم الفني المعتمدة لحماية المنشأة ومنع إعادة التعيين العشوائية.
     """
-    import secrets
-    from datetime import datetime, timezone, timedelta
-
-    clean_id = req.identifier.strip().lower()
-    if not clean_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="يرجى إدخال البريد الإلكتروني أو اسم المستخدم المسجل."
-        )
-
-    # 1. البحث عن المستخدم بالاسم أو البريد
-    user = db.query(User).filter(
-        (func.lower(User.username) == clean_id) | (func.lower(User.email) == clean_id)
-    ).first()
-
-    # 2. إذا لم يوجد، نبحث بواسطة البريد أو الاسم المسجل للمنشأة
-    if not user:
-        org = db.query(Organization).filter(
-            (func.lower(Organization.contact_email) == clean_id) |
-            (func.lower(Organization.name) == clean_id)
-        ).first()
-        if org:
-            user = db.query(User).filter(
-                User.organization_id == org.id,
-                User.role == UserRoleEnum.ORG_ADMIN
-            ).first()
-            if not user:
-                user = db.query(User).filter(User.organization_id == org.id).first()
-
-    if not user:
-        return {
-            "success": False,
-            "message": "لم نتمكن من العثور على حساب مسجل بهذا البريد أو اسم المستخدم. يرجى التحقق من المدخلات أو التواصل مع إدارة المنصة."
-        }
-
-    # توليد رمز أمان سري لإعادة التعيين صالح لـ 24 ساعة
-    reset_token = secrets.token_urlsafe(32)
-    user.reset_token = reset_token
-    user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
-    db.commit()
-
+    from app.models.schema import PlatformSupportContact
+    contact = db.query(PlatformSupportContact).filter(PlatformSupportContact.id == "default").first()
     return {
         "success": True,
-        "message": f"تم التعرف على الحساب بنجاح! اسم المستخدم الخاص بك هو: '{user.username}'. يمكنك تعيين كلمة مرور جديدة الآن.",
-        "username": user.username,
-        "email": user.email,
-        "reset_token": reset_token
+        "message": "لحماية أمان وسرية بيانات منشأتك، يتم تأكيد استعادة الحساب حصراً عبر التواصل مع إدارة المنصة والدعم الفني المعتمد.",
+        "support": {
+            "phone": contact.support_phone if contact else None,
+            "whatsapp": contact.support_whatsapp if contact else None,
+            "email": contact.support_email if contact else None,
+            "notes": contact.support_notes if contact else None
+        }
     }
 
 

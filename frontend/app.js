@@ -82,222 +82,181 @@ window.fillDemoLogin = (username, password) => {
   if (btn) btn.click();
 };
 
-let currentForgotResetToken = null;
-
-function openForgotPasswordModal() {
+async function openSupportContactModal() {
   closeLoginModal();
-  const modal = document.getElementById("forgotPasswordModal");
-  if (modal) {
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
-    const form1 = document.getElementById("forgotPasswordForm");
-    const form2 = document.getElementById("forgotResetPassForm");
-    const alert1 = document.getElementById("forgotAlert");
-    const alert2 = document.getElementById("forgotResetAlert");
-    const input = document.getElementById("forgotIdentifierInput");
-    if (form1) form1.reset();
-    if (form2) {
-      form2.reset();
-      form2.classList.add("hidden");
-    }
-    if (alert1) {
-      alert1.className = "hidden p-3 rounded-xl text-xs text-right";
-      alert1.textContent = "";
-    }
-    if (alert2) {
-      alert2.className = "hidden p-3 rounded-xl text-xs text-right";
-      alert2.textContent = "";
-    }
-    if (input) {
-      const loginU = document.getElementById("loginUsernameInput");
-      if (loginU && loginU.value) {
-        input.value = loginU.value.trim();
-      }
-      setTimeout(() => input.focus(), 50);
-    }
-    if (window.lucide) lucide.createIcons();
+  const modal = document.getElementById("supportContactModal");
+  if (!modal) return;
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+
+  const container = document.getElementById("supportChannelsContainer");
+  const notesContainer = document.getElementById("supportNotesContainer");
+  const hoursText = document.getElementById("supportWorkingHoursText");
+  const notesText = document.getElementById("supportNotesText");
+
+  if (container) {
+    container.innerHTML = `
+      <div class="p-6 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-2">
+        <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        <span>جاري جلب قنوات الدعم المعتمدة...</span>
+      </div>
+    `;
   }
+
+  try {
+    const res = await fetch("/api/v1/auth/support-contact");
+    if (!res.ok) throw new Error("تعذر جلب بيانات الدعم");
+    const data = await res.json();
+
+    let cardsHtml = "";
+    let hasAnyChannel = false;
+
+    // 1. WhatsApp Channel
+    if (data.support_whatsapp && data.support_whatsapp.trim()) {
+      hasAnyChannel = true;
+      const cleanWa = data.support_whatsapp.trim().replace(/[^0-9]/g, "");
+      cardsHtml += `
+        <a href="https://wa.me/${cleanWa}?text=${encodeURIComponent('مرحباً، أود استعادة بيانات الدخول لمنشأتي التجارية على المنصة')}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-between p-3 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 text-emerald-200 transition group cursor-pointer active:scale-98">
+          <span class="text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 px-2.5 py-1 rounded-lg flex items-center gap-1 group-hover:bg-emerald-500/30">
+            <span>محادثة واتساب</span>
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+          </span>
+          <div class="flex items-center gap-2.5">
+            <div class="text-right">
+              <div class="font-bold text-xs text-white">واتساب الدعم السريع</div>
+              <div class="text-[11px] text-emerald-400 font-mono" dir="ltr">${data.support_whatsapp}</div>
+            </div>
+            <div class="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="message-circle" class="w-4.5 h-4.5"></i>
+            </div>
+          </div>
+        </a>
+      `;
+    }
+
+    // 2. Phone Call Channel
+    if (data.support_phone && data.support_phone.trim()) {
+      hasAnyChannel = true;
+      const cleanPhone = data.support_phone.trim().replace(/[^0-9+]/g, "");
+      cardsHtml += `
+        <a href="tel:${cleanPhone}" class="flex items-center justify-between p-3 rounded-xl bg-indigo-950/40 hover:bg-indigo-900/50 border border-indigo-500/30 text-indigo-200 transition group cursor-pointer active:scale-98">
+          <span class="text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-lg flex items-center gap-1 group-hover:bg-indigo-500/30">
+            <span>اتصال هاتفي</span>
+            <i data-lucide="phone-call" class="w-3.5 h-3.5"></i>
+          </span>
+          <div class="flex items-center gap-2.5">
+            <div class="text-right">
+              <div class="font-bold text-xs text-white">هاتف الدعم المباشر</div>
+              <div class="text-[11px] text-indigo-400 font-mono" dir="ltr">${data.support_phone}</div>
+            </div>
+            <div class="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="phone" class="w-4.5 h-4.5"></i>
+            </div>
+          </div>
+        </a>
+      `;
+    }
+
+    // 3. Email Channel
+    if (data.support_email && data.support_email.trim()) {
+      hasAnyChannel = true;
+      cardsHtml += `
+        <a href="mailto:${data.support_email.trim()}?subject=${encodeURIComponent('طلب مساعدة / استعادة بيانات الدخول للمنشأة')}" class="flex items-center justify-between p-3 rounded-xl bg-sky-950/40 hover:bg-sky-900/50 border border-sky-500/30 text-sky-200 transition group cursor-pointer active:scale-98">
+          <span class="text-xs font-mono font-bold bg-sky-500/20 text-sky-300 px-2.5 py-1 rounded-lg flex items-center gap-1 group-hover:bg-sky-500/30">
+            <span>إرسال بريد</span>
+            <i data-lucide="mail" class="w-3.5 h-3.5"></i>
+          </span>
+          <div class="flex items-center gap-2.5">
+            <div class="text-right">
+              <div class="font-bold text-xs text-white">البريد الإلكتروني المعتمد</div>
+              <div class="text-[11px] text-sky-400 font-mono" dir="ltr">${data.support_email}</div>
+            </div>
+            <div class="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="mail" class="w-4.5 h-4.5"></i>
+            </div>
+          </div>
+        </a>
+      `;
+    }
+
+    if (!hasAnyChannel) {
+      cardsHtml = `
+        <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-center text-slate-300 text-xs space-y-1">
+          <p class="font-semibold text-white">يرجى التواصل مع مالك المنصة أو المسؤول المباشر</p>
+          <p class="text-slate-400 text-[11px]">سيقوم مالك المنصة بتزويدك ببيانات الدخول أو توليد رابط آمن لك.</p>
+        </div>
+      `;
+    }
+
+    if (container) container.innerHTML = cardsHtml;
+
+    // Working hours & Notes
+    if (notesContainer) {
+      if (data.working_hours || data.support_notes) {
+        notesContainer.classList.remove("hidden");
+        if (hoursText) hoursText.textContent = data.working_hours || "الدعم متواجد لخدمتكم";
+        if (notesText) notesText.textContent = data.support_notes || "";
+      } else {
+        notesContainer.classList.add("hidden");
+      }
+    }
+  } catch (err) {
+    if (container) {
+      container.innerHTML = `
+        <div class="p-4 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs text-center">
+          تعذر تحميل قنوات الدعم تلقائياً. يرجى التواصل مع مالك المنصة مباشرة.
+        </div>
+      `;
+    }
+  }
+
+  if (window.lucide) lucide.createIcons();
 }
 
-function closeForgotPasswordModal() {
-  const modal = document.getElementById("forgotPasswordModal");
+function closeSupportContactModal() {
+  const modal = document.getElementById("supportContactModal");
   if (modal) {
     modal.classList.add("hidden");
     modal.classList.remove("flex");
   }
 }
 
-function setupForgotPasswordEvents() {
+function setupSupportContactEvents() {
   const openBtn = document.getElementById("openForgotPassBtn");
   if (openBtn) {
-    openBtn.addEventListener("click", openForgotPasswordModal);
+    openBtn.addEventListener("click", openSupportContactModal);
   }
 
-  const closeBtn = document.getElementById("closeForgotPassModalBtn");
+  const closeBtn = document.getElementById("closeSupportContactModalBtn");
   if (closeBtn) {
     closeBtn.addEventListener("click", () => {
-      closeForgotPasswordModal();
+      closeSupportContactModal();
       openLoginModal();
     });
   }
 
-  const backBtn = document.getElementById("backToLoginBtn");
+  const backBtn = document.getElementById("backToLoginFromSupportBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
-      closeForgotPasswordModal();
+      closeSupportContactModal();
       openLoginModal();
     });
   }
 
-  const forgotModal = document.getElementById("forgotPasswordModal");
-  if (forgotModal) {
-    forgotModal.addEventListener("click", (e) => {
-      if (e.target === forgotModal) {
-        closeForgotPasswordModal();
+  const supportModal = document.getElementById("supportContactModal");
+  if (supportModal) {
+    supportModal.addEventListener("click", (e) => {
+      if (e.target === supportModal) {
+        closeSupportContactModal();
         openLoginModal();
-      }
-    });
-  }
-
-  const forgotForm = document.getElementById("forgotPasswordForm");
-  if (forgotForm) {
-    forgotForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const input = document.getElementById("forgotIdentifierInput");
-      const alertBox = document.getElementById("forgotAlert");
-      const submitBtn = document.getElementById("submitForgotBtn");
-      const resetForm = document.getElementById("forgotResetPassForm");
-      const foundUserEl = document.getElementById("forgotFoundUsername");
-
-      const identifier = input ? input.value.trim() : "";
-      if (!identifier) return;
-
-      const origBtn = submitBtn.innerHTML;
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = `<span>جاري التحقق من الحساب...</span>`;
-
-      try {
-        const res = await fetch("/api/v1/auth/forgot-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identifier })
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || "فشل التحقق من الحساب");
-        }
-
-        if (data.success) {
-          if (alertBox) {
-            alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold block text-right";
-            alertBox.textContent = `✅ ${data.message}`;
-          }
-          currentForgotResetToken = data.reset_token;
-          if (foundUserEl) {
-            foundUserEl.textContent = data.username;
-          }
-          if (resetForm) {
-            resetForm.classList.remove("hidden");
-            const newPassInput = document.getElementById("forgotNewPassInput");
-            if (newPassInput) newPassInput.focus();
-          }
-        } else {
-          if (alertBox) {
-            alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
-            alertBox.textContent = `⚠️ ${data.message}`;
-          }
-          if (resetForm) resetForm.classList.add("hidden");
-        }
-      } catch (err) {
-        if (alertBox) {
-          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
-          alertBox.textContent = `❌ ${err.message}`;
-        }
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = origBtn;
-        if (window.lucide) lucide.createIcons();
-      }
-    });
-  }
-
-  const resetPassForm = document.getElementById("forgotResetPassForm");
-  if (resetPassForm) {
-    resetPassForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const p1 = document.getElementById("forgotNewPassInput").value;
-      const p2 = document.getElementById("forgotConfirmPassInput").value;
-      const alertBox = document.getElementById("forgotResetAlert");
-      const submitBtn = document.getElementById("submitForgotResetBtn");
-
-      if (p1 !== p2) {
-        if (alertBox) {
-          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
-          alertBox.textContent = "❌ كلمتا المرور غير متطابقتين!";
-        }
-        return;
-      }
-
-      if (p1.length < 6) {
-        if (alertBox) {
-          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
-          alertBox.textContent = "❌ يجب أن تتكون كلمة المرور من 6 خانات على الأقل.";
-        }
-        return;
-      }
-
-      const origBtn = submitBtn.innerHTML;
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = `<span>جاري حفظ كلمة المرور...</span>`;
-
-      try {
-        const res = await fetch("/api/v1/auth/reset-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            token: currentForgotResetToken,
-            new_password: p1
-          })
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || "فشل تعيين كلمة المرور");
-        }
-
-        if (alertBox) {
-          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold block text-right";
-          alertBox.textContent = `✅ ${data.message}`;
-        }
-
-        setTimeout(() => {
-          closeForgotPasswordModal();
-          openLoginModal();
-          const uInput = document.getElementById("loginUsernameInput");
-          const pInput = document.getElementById("loginPasswordInput");
-          if (uInput && data.username) uInput.value = data.username;
-          if (pInput) {
-            pInput.value = p1;
-            pInput.focus();
-          }
-        }, 1500);
-      } catch (err) {
-        if (alertBox) {
-          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
-          alertBox.textContent = `❌ ${err.message}`;
-        }
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = origBtn;
-        if (window.lucide) lucide.createIcons();
       }
     });
   }
 }
 
 function setupAuthSystem() {
-  setupForgotPasswordEvents();
+  setupSupportContactEvents();
 
   const form = document.getElementById("loginForm");
   if (form) {
@@ -382,7 +341,7 @@ async function handleLoginSubmit(e) {
       errAlert.innerHTML = `
         <div class="space-y-1">
           <div>${err.message}</div>
-          <div class="text-[11px] text-slate-300">نسيت بيانات الدخول؟ اضغط على <strong>"نسيت كلمة المرور أو الإيميل؟"</strong> بالأسفل لاستعادة حسابك.</div>
+          <div class="text-[11px] text-slate-300">نسيت بيانات الدخول؟ اضغط على <strong>"نسيت كلمة المرور أو الإيميل؟"</strong> بالأسفل للتواصل الفوري مع إدارة المنصة والدعم الفني.</div>
         </div>
       `;
       errAlert.classList.remove("hidden");
@@ -3135,6 +3094,24 @@ function setupSuperAdminConsole() {
         }
         document.getElementById("adminProfileCurrentPass").value = "";
         document.getElementById("adminProfileNewPass").value = "";
+
+        // Load current platform support channels
+        authFetch("/api/v1/admin/support-contact")
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data) {
+              const p = document.getElementById("adminSupportPhone");
+              const w = document.getElementById("adminSupportWhatsapp");
+              const e = document.getElementById("adminSupportEmail");
+              const n = document.getElementById("adminSupportNotes");
+              if (p) p.value = data.support_phone || "";
+              if (w) w.value = data.support_whatsapp || "";
+              if (e) e.value = data.support_email || "";
+              if (n) n.value = data.support_notes || data.working_hours || "";
+            }
+          })
+          .catch(() => {});
+
         const alertBox = document.getElementById("adminProfileAlert");
         if (alertBox) {
           alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
@@ -3164,12 +3141,17 @@ function setupSuperAdminConsole() {
       const alertBox = document.getElementById("adminProfileAlert");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `<span>جاري حفظ وتحديث الحساب...</span>`;
+        submitBtn.innerHTML = `<span>جاري حفظ وتحديث الحساب وقنوات الدعم...</span>`;
       }
       try {
         const payload = {
           full_name: document.getElementById("adminProfileFullName").value.trim(),
-          email: document.getElementById("adminProfileEmail").value.trim()
+          email: document.getElementById("adminProfileEmail").value.trim(),
+          support_phone: document.getElementById("adminSupportPhone") ? document.getElementById("adminSupportPhone").value.trim() : null,
+          support_whatsapp: document.getElementById("adminSupportWhatsapp") ? document.getElementById("adminSupportWhatsapp").value.trim() : null,
+          support_email: document.getElementById("adminSupportEmail") ? document.getElementById("adminSupportEmail").value.trim() : null,
+          support_notes: document.getElementById("adminSupportNotes") ? document.getElementById("adminSupportNotes").value.trim() : null,
+          working_hours: document.getElementById("adminSupportNotes") ? document.getElementById("adminSupportNotes").value.trim() : null
         };
 
         const currentPass = document.getElementById("adminProfileCurrentPass").value;

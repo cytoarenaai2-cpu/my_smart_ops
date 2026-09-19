@@ -201,3 +201,17 @@ class AuditFlag(Base):
     organization = relationship("Organization", back_populates="audit_flags")
     transaction = relationship("Transaction", back_populates="audit_flags")
     document = relationship("Document", back_populates="audit_flags")
+
+
+class PlatformSupportContact(Base):
+    __tablename__ = "platform_support_contacts"
+
+    id = Column(String(36), primary_key=True, default="default")
+    support_phone = Column(String(50), nullable=True)
+    support_whatsapp = Column(String(50), nullable=True)
+    support_email = Column(String(100), nullable=True)
+    working_hours = Column(String(150), nullable=True)
+    support_notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
