@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.database import get_db
-from app.models.schema import User, Organization, Branch, Transaction, UserRoleEnum
+from app.models.schema import User, Organization, Branch, Transaction, SubscriptionPlan, UserRoleEnum
 from app.core.security import (
     hash_password,
     verify_password,
@@ -16,6 +16,39 @@ from app.core.security import (
 )
 
 router = APIRouter(prefix="/admin", tags=["Platform Super Admin Management"])
+
+
+class CreatePlanRequest(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+    price_monthly_jod: float = 0.0
+    price_annual_jod: float = 0.0
+    max_branches: int = 1
+    max_users: int = 3
+    max_transactions_monthly: int = 1000
+    has_telegram_bot: bool = True
+    has_jofotara_qr: bool = True
+    has_ai_daily_brief: bool = True
+    has_tax_reports: bool = True
+    badge_color: str = "emerald"
+    is_active: bool = True
+
+
+class UpdatePlanRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price_monthly_jod: Optional[float] = None
+    price_annual_jod: Optional[float] = None
+    max_branches: Optional[int] = None
+    max_users: Optional[int] = None
+    max_transactions_monthly: Optional[int] = None
+    has_telegram_bot: Optional[bool] = None
+    has_jofotara_qr: Optional[bool] = None
+    has_ai_daily_brief: Optional[bool] = None
+    has_tax_reports: Optional[bool] = None
+    badge_color: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class CreateOrgRequest(BaseModel):
@@ -125,6 +158,163 @@ def get_platform_summary(
         "connected_bots": connected_bots,
         "monthly_revenue_jod": round(float(monthly_revenue), 2)
     }
+
+
+# ==========================================
+# Subscription Plans Management (خطط وباقات الاشتراك)
+# ==========================================
+
+@router.get("/plans")
+def list_plans(
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    استعراض كافة خطط وباقات الاشتراك المتاحة في المنصة مع عدد المشتركين في كل باقة.
+    """
+    plans = db.query(SubscriptionPlan).order_by(SubscriptionPlan.created_at).all()
+    results = []
+    for p in plans:
+        subscriber_count = db.query(Organization).filter(
+            Organization.subscription_plan == p.code
+        ).count()
+        results.append({
+            "id": p.id,
+            "code": p.code,
+            "name": p.name,
+            "description": p.description or "",
+            "price_monthly_jod": p.price_monthly_jod,
+            "price_annual_jod": p.price_annual_jod,
+            "max_branches": p.max_branches,
+            "max_users": p.max_users,
+            "max_transactions_monthly": p.max_transactions_monthly,
+            "has_telegram_bot": p.has_telegram_bot,
+            "has_jofotara_qr": p.has_jofotara_qr,
+            "has_ai_daily_brief": p.has_ai_daily_brief,
+            "has_tax_reports": p.has_tax_reports,
+            "badge_color": p.badge_color or "emerald",
+            "is_active": p.is_active,
+            "subscriber_count": subscriber_count,
+            "created_at": p.created_at.strftime("%Y-%m-%d") if p.created_at else ""
+        })
+    return results
+
+
+@router.post("/plans")
+def create_plan(
+    req: CreatePlanRequest,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    إنشاء خطة اشتراك سحابية جديدة وتحديد أسعارها وميزاتها.
+    """
+    clean_code = req.code.strip().upper()
+    if db.query(SubscriptionPlan).filter(SubscriptionPlan.code == clean_code).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"رمز الخطة '{clean_code}' موجود مسبقاً. الرجاء استخدام كود فريد."
+        )
+    
+    plan = SubscriptionPlan(
+        id=str(uuid.uuid4()),
+        code=clean_code,
+        name=req.name.strip(),
+        description=req.description.strip() if req.description else None,
+        price_monthly_jod=req.price_monthly_jod,
+        price_annual_jod=req.price_annual_jod,
+        max_branches=req.max_branches,
+        max_users=req.max_users,
+        max_transactions_monthly=req.max_transactions_monthly,
+        has_telegram_bot=req.has_telegram_bot,
+        has_jofotara_qr=req.has_jofotara_qr,
+        has_ai_daily_brief=req.has_ai_daily_brief,
+        has_tax_reports=req.has_tax_reports,
+        badge_color=req.badge_color,
+        is_active=req.is_active
+    )
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+    return {"message": f"تم إنشاء خطة الاشتراك '{plan.name}' بنجاح!", "plan_id": plan.id}
+
+
+@router.put("/plans/{plan_id}")
+def update_plan(
+    plan_id: str,
+    req: UpdatePlanRequest,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    تعديل بيانات خطة الاشتراك الحالية وأسعارها وميزاتها.
+    """
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="خطة الاشتراك غير موجودة."
+        )
+    
+    if req.name is not None:
+        plan.name = req.name.strip()
+    if req.description is not None:
+        plan.description = req.description.strip()
+    if req.price_monthly_jod is not None:
+        plan.price_monthly_jod = req.price_monthly_jod
+    if req.price_annual_jod is not None:
+        plan.price_annual_jod = req.price_annual_jod
+    if req.max_branches is not None:
+        plan.max_branches = req.max_branches
+    if req.max_users is not None:
+        plan.max_users = req.max_users
+    if req.max_transactions_monthly is not None:
+        plan.max_transactions_monthly = req.max_transactions_monthly
+    if req.has_telegram_bot is not None:
+        plan.has_telegram_bot = req.has_telegram_bot
+    if req.has_jofotara_qr is not None:
+        plan.has_jofotara_qr = req.has_jofotara_qr
+    if req.has_ai_daily_brief is not None:
+        plan.has_ai_daily_brief = req.has_ai_daily_brief
+    if req.has_tax_reports is not None:
+        plan.has_tax_reports = req.has_tax_reports
+    if req.badge_color is not None:
+        plan.badge_color = req.badge_color
+    if req.is_active is not None:
+        plan.is_active = req.is_active
+        
+    db.commit()
+    return {"message": f"تم تحديث بيانات خطة الاشتراك '{plan.name}' بنجاح!"}
+
+
+@router.delete("/plans/{plan_id}")
+def delete_plan(
+    plan_id: str,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    حذف خطة الاشتراك من المنصة بشرط عدم وجود منشآت نشطة مرتبطة بها.
+    """
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="خطة الاشتراك غير موجودة."
+        )
+    
+    active_count = db.query(Organization).filter(
+        Organization.subscription_plan == plan.code
+    ).count()
+    if active_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"لا يمكن حذف الخطة '{plan.name}' لوجود {active_count} منشأة مشتركة بها حالياً. يمكنك إلغاء تفعيلها بدلاً من ذلك."
+        )
+        
+    db.delete(plan)
+    db.commit()
+    return {"message": f"تم حذف خطة الاشتراك '{plan.name}' بنجاح!"}
 
 
 @router.get("/organizations")

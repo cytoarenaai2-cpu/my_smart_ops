@@ -52,6 +52,82 @@ def init_db():
         except Exception:
             pass
 
+    # Seed default subscription plans if table is empty
+    with SessionLocal() as db_session:
+        from app.models.schema import SubscriptionPlan
+        try:
+            if db_session.query(SubscriptionPlan).count() == 0:
+                default_plans = [
+                    SubscriptionPlan(
+                        code="TRIAL",
+                        name="الخطة التجريبية (Free Trial)",
+                        description="فترة تجريبية مجانية لمدة 14 يوماً مع كافة ميزات الفوترة والامتثال الضريبي",
+                        price_monthly_jod=0.0,
+                        price_annual_jod=0.0,
+                        max_branches=1,
+                        max_users=2,
+                        max_transactions_monthly=100,
+                        has_telegram_bot=False,
+                        has_jofotara_qr=True,
+                        has_ai_daily_brief=True,
+                        has_tax_reports=True,
+                        badge_color="amber",
+                        is_active=True
+                    ),
+                    SubscriptionPlan(
+                        code="BASIC",
+                        name="الخطة الأساسية (Basic)",
+                        description="مناسبة للمتاجر الصغيرة ونقاط البيع الفردية مع فواتير JoFotara المعتمدة",
+                        price_monthly_jod=29.0,
+                        price_annual_jod=290.0,
+                        max_branches=1,
+                        max_users=3,
+                        max_transactions_monthly=1000,
+                        has_telegram_bot=False,
+                        has_jofotara_qr=True,
+                        has_ai_daily_brief=True,
+                        has_tax_reports=True,
+                        badge_color="sky",
+                        is_active=True
+                    ),
+                    SubscriptionPlan(
+                        code="PRO",
+                        name="الخطة الاحترافية (Pro)",
+                        description="الخيار الأمثل للمطاعم والأنشطة التجارية المتوسطة مع بوت تلغرام مخصص",
+                        price_monthly_jod=49.0,
+                        price_annual_jod=490.0,
+                        max_branches=3,
+                        max_users=10,
+                        max_transactions_monthly=5000,
+                        has_telegram_bot=True,
+                        has_jofotara_qr=True,
+                        has_ai_daily_brief=True,
+                        has_tax_reports=True,
+                        badge_color="emerald",
+                        is_active=True
+                    ),
+                    SubscriptionPlan(
+                        code="ENTERPRISE",
+                        name="خطة الشركات والمجموعات (Enterprise)",
+                        description="حل متكامل للشركات ذات الفروع المتعددة وحجم العمليات غير المحدود مع دعم فني مخصص",
+                        price_monthly_jod=99.0,
+                        price_annual_jod=990.0,
+                        max_branches=-1,
+                        max_users=-1,
+                        max_transactions_monthly=-1,
+                        has_telegram_bot=True,
+                        has_jofotara_qr=True,
+                        has_ai_daily_brief=True,
+                        has_tax_reports=True,
+                        badge_color="purple",
+                        is_active=True
+                    )
+                ]
+                db_session.add_all(default_plans)
+                db_session.commit()
+        except Exception:
+            db_session.rollback()
+
 def get_db():
     db = SessionLocal()
     try:

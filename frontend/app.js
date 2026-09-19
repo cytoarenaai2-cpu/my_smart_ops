@@ -2146,9 +2146,12 @@ function checkPublicResetPasswordParam() {
   }
 }
 
+let saasPlansCache = [];
+
 async function loadSuperAdminConsoleData() {
   await Promise.all([
     fetchPlatformSummary(),
+    fetchPlatformPlans(),
     fetchPlatformOrganizations(),
     fetchPlatformUsers()
   ]);
@@ -2186,6 +2189,132 @@ async function fetchPlatformSummary() {
     if (mrrEl) mrrEl.textContent = Number(summary.monthly_revenue_jod).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   } catch (err) {
     console.error("fetchPlatformSummary error:", err);
+  }
+}
+
+async function fetchPlatformPlans() {
+  const container = document.getElementById("saasPlansCardsContainer");
+  if (!container) return;
+
+  try {
+    const res = await authFetch("/api/v1/admin/plans");
+    if (!res.ok) throw new Error("فشل جلب خطط الاشتراك");
+    const plans = await res.json();
+    saasPlansCache = plans;
+
+    // Update plans filter in orgs table
+    const planFilter = document.getElementById("saasPlanFilter");
+    if (planFilter) {
+      const currentVal = planFilter.value;
+      planFilter.innerHTML = `<option value="ALL">كافة خطط الاشتراك</option>` +
+        plans.map(p => `<option value="${p.code}">${p.name} (${p.code})</option>`).join("");
+      planFilter.value = currentVal;
+    }
+
+    // Update New Org Plan dropdown
+    const newOrgPlanSelect = document.getElementById("modalNewOrgPlan");
+    if (newOrgPlanSelect) {
+      const current = newOrgPlanSelect.value;
+      newOrgPlanSelect.innerHTML = plans.filter(p => p.is_active).map(p => 
+        `<option value="${p.code}" data-price="${p.price_monthly_jod}" ${p.code === current ? 'selected' : ''}>${p.name} - ${p.price_monthly_jod} د.أ/شهرياً</option>`
+      ).join("");
+    }
+
+    // Update Edit Org Plan dropdown
+    const editOrgPlanSelect = document.getElementById("editOrgPlanSelect");
+    if (editOrgPlanSelect) {
+      const current = editOrgPlanSelect.value;
+      editOrgPlanSelect.innerHTML = plans.map(p => 
+        `<option value="${p.code}" data-price="${p.price_monthly_jod}" ${p.code === current ? 'selected' : ''}>${p.name} (${p.code}) - ${p.price_monthly_jod} د.أ</option>`
+      ).join("");
+    }
+
+    // Render cards
+    container.innerHTML = plans.map(p => {
+      const colorMap = {
+        emerald: { border: "border-emerald-500/30", bg: "bg-emerald-500/10", text: "text-emerald-400", badge: "bg-emerald-950 text-emerald-300 border-emerald-500/30" },
+        indigo: { border: "border-indigo-500/30", bg: "bg-indigo-500/10", text: "text-indigo-400", badge: "bg-indigo-950 text-indigo-300 border-indigo-500/30" },
+        purple: { border: "border-purple-500/30", bg: "bg-purple-500/10", text: "text-purple-400", badge: "bg-purple-950 text-purple-300 border-purple-500/30" },
+        amber: { border: "border-amber-500/30", bg: "bg-amber-500/10", text: "text-amber-400", badge: "bg-amber-950 text-amber-300 border-amber-500/30" },
+        sky: { border: "border-sky-500/30", bg: "bg-sky-500/10", text: "text-sky-400", badge: "bg-sky-950 text-sky-300 border-sky-500/30" },
+        rose: { border: "border-rose-500/30", bg: "bg-rose-500/10", text: "text-rose-400", badge: "bg-rose-950 text-rose-300 border-rose-500/30" }
+      };
+      const theme = colorMap[p.badge_color] || colorMap.indigo;
+
+      return `
+        <div class="glass-card rounded-xl p-4 border ${theme.border} relative flex flex-col justify-between hover:border-slate-600 transition shadow-lg">
+          <div>
+            <div class="flex items-start justify-between gap-2 mb-2">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${theme.badge}">
+                ${p.code}
+              </span>
+              ${p.is_active ? `
+                <span class="text-[10px] text-emerald-400 bg-emerald-950/80 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">متاحة</span>
+              ` : `
+                <span class="text-[10px] text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded-full font-bold">معطلة</span>
+              `}
+            </div>
+
+            <h4 class="font-extrabold text-white text-sm mb-1">${p.name}</h4>
+            <p class="text-[11px] text-slate-400 mb-3 min-h-[32px]">${p.description || 'خطة اشتراك سحابية قياسية'}</p>
+
+            <div class="mb-3 pb-3 border-b border-slate-800">
+              <div class="text-2xl font-black text-white">
+                ${p.price_monthly_jod} <span class="text-xs font-normal text-slate-400">د.أ / شهرياً</span>
+              </div>
+              <div class="text-[10px] text-slate-400">
+                أو ${p.price_annual_jod} د.أ / سنوياً
+              </div>
+            </div>
+
+            <div class="space-y-1.5 text-xs text-slate-300 mb-4">
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="text-slate-400">الفروع المسموحة:</span>
+                <span class="font-bold text-white">${p.max_branches === -1 ? 'غير محدود ♾️' : p.max_branches}</span>
+              </div>
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="text-slate-400">المستخدمين:</span>
+                <span class="font-bold text-white">${p.max_users === -1 ? 'غير محدود ♾️' : p.max_users}</span>
+              </div>
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="text-slate-400">الحد الشهري للفواتير:</span>
+                <span class="font-bold text-white">${p.max_transactions_monthly === -1 ? 'غير محدود ♾️' : p.max_transactions_monthly.toLocaleString()}</span>
+              </div>
+              
+              <div class="pt-2 border-t border-slate-800/80 space-y-1 text-[11px]">
+                <div class="flex items-center gap-1.5 ${p.has_telegram_bot ? 'text-sky-300' : 'text-slate-500 line-through'}">
+                  <i data-lucide="${p.has_telegram_bot ? 'check' : 'x'}" class="w-3 h-3"></i>
+                  <span>بوت تلغرام مخصص</span>
+                </div>
+                <div class="flex items-center gap-1.5 ${p.has_jofotara_qr ? 'text-emerald-300' : 'text-slate-500 line-through'}">
+                  <i data-lucide="${p.has_jofotara_qr ? 'check' : 'x'}" class="w-3 h-3"></i>
+                  <span>فواتير JoFotara QR</span>
+                </div>
+                <div class="flex items-center gap-1.5 ${p.has_ai_daily_brief ? 'text-indigo-300' : 'text-slate-500 line-through'}">
+                  <i data-lucide="${p.has_ai_daily_brief ? 'check' : 'x'}" class="w-3 h-3"></i>
+                  <span>ملخص ذكاء اصطناعي</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-800 flex items-center justify-between">
+            <span class="text-[10px] text-slate-400">
+              المشتركين: <strong class="text-white">${p.subscriber_count}</strong> منشأة
+            </span>
+            <button type="button" onclick="window.openEditPlanModal('${p.id}')" class="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer">
+              <i data-lucide="edit" class="w-3 h-3"></i>
+              <span>تعديل الخطة</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error("fetchPlatformPlans error:", err);
+    container.innerHTML = `<div class="col-span-4 p-4 text-center text-rose-400 text-xs">فشل جلب خطط الاشتراك: ${err.message}</div>`;
   }
 }
 
@@ -2420,15 +2549,52 @@ async function fetchPlatformUsers() {
           </td>
           <td class="p-2.5 text-slate-300">${u.organization_name || '<span class="text-purple-300">المنصة المركزية</span>'}</td>
           <td class="p-2.5 text-center">
-            <span class="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[10px]">نشط</span>
+            <div class="flex items-center justify-center gap-1.5">
+              <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
+                <i data-lucide="key" class="w-3.5 h-3.5"></i>
+              </button>
+              ${u.role !== 'SUPER_ADMIN' ? `
+                <button type="button" onclick="window.confirmDeleteUser('${u.id}', '${u.username}')" title="حذف المستخدم" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition cursor-pointer">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              ` : ''}
+            </div>
           </td>
         </tr>
       `;
     }).join("");
+    if (window.lucide) lucide.createIcons();
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
   }
 }
+
+window.openUserPasswordModal = (userId, username, fullName) => {
+  selectedOrgForPasswordModal = {
+    id: "",
+    name: "مستخدم النظام",
+    admin_user: {
+      id: userId,
+      username: username,
+      full_name: fullName
+    }
+  };
+  openTenantPasswordModalInternal();
+};
+
+window.confirmDeleteUser = async (userId, username) => {
+  if (!confirm(`⚠️ تحذير:\nهل أنت متأكد من حذف حساب المستخدم "${username}"؟`)) return;
+  try {
+    const res = await authFetch(`/api/v1/admin/users/${userId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "فشل حذف المستخدم");
+    }
+    await fetchPlatformUsers();
+  } catch (err) {
+    alert(`❌ خطأ: ${err.message}`);
+  }
+};
 
 // Global actions exposed to window
 window.enterTenantView = async (orgId) => {
@@ -3102,6 +3268,359 @@ function setupSuperAdminConsole() {
         }
       } finally {
         if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  // 10. Super Admin Add User Modal Wireup
+  const adminAddUserModal = document.getElementById("adminCreateUserModal");
+  const openAdminAddUserBtn = document.getElementById("adminAddNewUserBtn");
+  const closeAdminAddUserBtn = document.getElementById("closeAdminCreateUserModalBtn");
+  const cancelAdminAddUserBtn = document.getElementById("cancelAdminCreateUserModalBtn");
+  const adminAddUserForm = document.getElementById("adminCreateUserModalForm");
+
+  const closeAdminAddUserModal = () => {
+    if (adminAddUserModal) {
+      adminAddUserModal.classList.add("hidden");
+      adminAddUserModal.classList.remove("flex");
+    }
+  };
+
+  if (openAdminAddUserBtn && adminAddUserModal) {
+    openAdminAddUserBtn.addEventListener("click", () => {
+      adminAddUserForm?.reset();
+      const alertBox = document.getElementById("adminCreateUserAlert");
+      if (alertBox) {
+        alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+        alertBox.textContent = "";
+      }
+
+      // Populate Org select
+      const orgSelect = document.getElementById("modalAdminUserOrgSelect");
+      if (orgSelect) {
+        orgSelect.innerHTML = `<option value="">👑 المنصة المركزية (Super Admin فقط)</option>` +
+          saasOrgsCache.map(o => `<option value="${o.id}">${o.name} (${o.tax_number || 'بدون ضريبي'})</option>`).join("");
+      }
+
+      adminAddUserModal.classList.remove("hidden");
+      adminAddUserModal.classList.add("flex");
+      if (window.lucide) lucide.createIcons();
+    });
+  }
+
+  if (closeAdminAddUserBtn) closeAdminAddUserBtn.addEventListener("click", closeAdminAddUserModal);
+  if (cancelAdminAddUserBtn) cancelAdminAddUserBtn.addEventListener("click", closeAdminAddUserModal);
+
+  if (adminAddUserForm) {
+    adminAddUserForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById("submitAdminCreateUserModalBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("adminCreateUserAlert");
+      
+      const orgIdVal = document.getElementById("modalAdminUserOrgSelect").value.trim() || null;
+      const roleVal = document.getElementById("modalAdminUserRole").value;
+
+      if (roleVal !== "SUPER_ADMIN" && !orgIdVal) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "⚠️ يرجى اختيار المنشأة التابع لها هذا المستخدم، أو اختيار رتبة 'مالك منصة' لحسابات المنصة العامة.";
+          alertBox.classList.remove("hidden");
+        }
+        return;
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري إنشاء المستخدم...</span>`;
+      }
+
+      try {
+        const payload = {
+          organization_id: orgIdVal,
+          username: document.getElementById("modalAdminUserUsername").value.trim(),
+          full_name: document.getElementById("modalAdminUserFullName").value.trim(),
+          email: document.getElementById("modalAdminUserEmail").value.trim() || null,
+          password: document.getElementById("modalAdminUserPass").value.trim(),
+          role: roleVal
+        };
+
+        const res = await authFetch("/api/v1/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل إنشاء المستخدم");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+
+        setTimeout(() => {
+          closeAdminAddUserModal();
+          fetchPlatformUsers();
+          fetchPlatformOrganizations();
+        }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 11. Create Plan Modal Wireup
+  const createPlanModal = document.getElementById("createPlanModal");
+  const openCreatePlanBtn = document.getElementById("saasAddNewPlanBtn");
+  const closeCreatePlanBtn = document.getElementById("closeCreatePlanModalBtn");
+  const cancelCreatePlanBtn = document.getElementById("cancelCreatePlanModalBtn");
+  const createPlanForm = document.getElementById("createPlanModalForm");
+
+  const closeCreatePlanModal = () => {
+    if (createPlanModal) {
+      createPlanModal.classList.add("hidden");
+      createPlanModal.classList.remove("flex");
+    }
+  };
+
+  if (openCreatePlanBtn && createPlanModal) {
+    openCreatePlanBtn.addEventListener("click", () => {
+      createPlanForm?.reset();
+      const alertBox = document.getElementById("createPlanAlert");
+      if (alertBox) {
+        alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+        alertBox.textContent = "";
+      }
+      createPlanModal.classList.remove("hidden");
+      createPlanModal.classList.add("flex");
+      if (window.lucide) lucide.createIcons();
+    });
+  }
+
+  if (closeCreatePlanBtn) closeCreatePlanBtn.addEventListener("click", closeCreatePlanModal);
+  if (cancelCreatePlanBtn) cancelCreatePlanBtn.addEventListener("click", closeCreatePlanModal);
+
+  if (createPlanForm) {
+    createPlanForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById("submitCreatePlanModalBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("createPlanAlert");
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري حفظ الخطة...</span>`;
+      }
+
+      try {
+        const payload = {
+          code: document.getElementById("modalNewPlanCode").value.trim(),
+          name: document.getElementById("modalNewPlanName").value.trim(),
+          price_monthly_jod: parseFloat(document.getElementById("modalNewPlanPriceMonthly").value) || 0,
+          price_annual_jod: parseFloat(document.getElementById("modalNewPlanPriceAnnual").value) || 0,
+          max_branches: parseInt(document.getElementById("modalNewPlanBranches").value) || 1,
+          max_users: parseInt(document.getElementById("modalNewPlanUsers").value) || 3,
+          max_transactions_monthly: parseInt(document.getElementById("modalNewPlanTx").value) || 1000,
+          badge_color: document.getElementById("modalNewPlanBadgeColor").value,
+          description: document.getElementById("modalNewPlanDesc").value.trim() || null,
+          has_telegram_bot: document.getElementById("modalNewPlanBot").checked,
+          has_jofotara_qr: document.getElementById("modalNewPlanJoFotara").checked,
+          has_ai_daily_brief: document.getElementById("modalNewPlanBrief").checked,
+          has_tax_reports: document.getElementById("modalNewPlanTax").checked,
+          is_active: true
+        };
+
+        const res = await authFetch("/api/v1/admin/plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل إنشاء الخطة");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+
+        setTimeout(() => {
+          closeCreatePlanModal();
+          fetchPlatformPlans();
+        }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 12. Edit Plan Modal Wireup
+  const editPlanModal = document.getElementById("editPlanModal");
+  const closeEditPlanBtn = document.getElementById("closeEditPlanModalBtn");
+  const cancelEditPlanBtn = document.getElementById("cancelEditPlanModalBtn");
+  const editPlanForm = document.getElementById("editPlanModalForm");
+  const deletePlanBtn = document.getElementById("deletePlanModalBtn");
+
+  const closeEditPlanModal = () => {
+    if (editPlanModal) {
+      editPlanModal.classList.add("hidden");
+      editPlanModal.classList.remove("flex");
+    }
+  };
+
+  if (closeEditPlanBtn) closeEditPlanBtn.addEventListener("click", closeEditPlanModal);
+  if (cancelEditPlanBtn) cancelEditPlanBtn.addEventListener("click", closeEditPlanModal);
+
+  window.openEditPlanModal = (planId) => {
+    const plan = saasPlansCache.find(p => p.id === planId);
+    if (!plan || !editPlanModal) return;
+
+    document.getElementById("modalEditPlanId").value = plan.id;
+    document.getElementById("modalEditPlanCode").value = plan.code;
+    document.getElementById("modalEditPlanName").value = plan.name;
+    document.getElementById("modalEditPlanPriceMonthly").value = plan.price_monthly_jod;
+    document.getElementById("modalEditPlanPriceAnnual").value = plan.price_annual_jod;
+    document.getElementById("modalEditPlanBranches").value = plan.max_branches;
+    document.getElementById("modalEditPlanUsers").value = plan.max_users;
+    document.getElementById("modalEditPlanTx").value = plan.max_transactions_monthly;
+    document.getElementById("modalEditPlanBadgeColor").value = plan.badge_color || "emerald";
+    document.getElementById("modalEditPlanDesc").value = plan.description || "";
+    document.getElementById("modalEditPlanIsActive").checked = !!plan.is_active;
+
+    document.getElementById("modalEditPlanBot").checked = !!plan.has_telegram_bot;
+    document.getElementById("modalEditPlanJoFotara").checked = !!plan.has_jofotara_qr;
+    document.getElementById("modalEditPlanBrief").checked = !!plan.has_ai_daily_brief;
+    document.getElementById("modalEditPlanTax").checked = !!plan.has_tax_reports;
+
+    const alertBox = document.getElementById("editPlanAlert");
+    if (alertBox) {
+      alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+      alertBox.textContent = "";
+    }
+
+    editPlanModal.classList.remove("hidden");
+    editPlanModal.classList.add("flex");
+    if (window.lucide) lucide.createIcons();
+  };
+
+  if (editPlanForm) {
+    editPlanForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const planId = document.getElementById("modalEditPlanId").value;
+      const submitBtn = document.getElementById("submitEditPlanModalBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("editPlanAlert");
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري حفظ التعديلات...</span>`;
+      }
+
+      try {
+        const payload = {
+          name: document.getElementById("modalEditPlanName").value.trim(),
+          price_monthly_jod: parseFloat(document.getElementById("modalEditPlanPriceMonthly").value) || 0,
+          price_annual_jod: parseFloat(document.getElementById("modalEditPlanPriceAnnual").value) || 0,
+          max_branches: parseInt(document.getElementById("modalEditPlanBranches").value) || 1,
+          max_users: parseInt(document.getElementById("modalEditPlanUsers").value) || 3,
+          max_transactions_monthly: parseInt(document.getElementById("modalEditPlanTx").value) || 1000,
+          badge_color: document.getElementById("modalEditPlanBadgeColor").value,
+          description: document.getElementById("modalEditPlanDesc").value.trim() || null,
+          has_telegram_bot: document.getElementById("modalEditPlanBot").checked,
+          has_jofotara_qr: document.getElementById("modalEditPlanJoFotara").checked,
+          has_ai_daily_brief: document.getElementById("modalEditPlanBrief").checked,
+          has_tax_reports: document.getElementById("modalEditPlanTax").checked,
+          is_active: document.getElementById("modalEditPlanIsActive").checked
+        };
+
+        const res = await authFetch(`/api/v1/admin/plans/${planId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تعديل الخطة");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+
+        setTimeout(() => {
+          closeEditPlanModal();
+          fetchPlatformPlans();
+          loadSuperAdminConsoleData();
+        }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  if (deletePlanBtn) {
+    deletePlanBtn.addEventListener("click", async () => {
+      const planId = document.getElementById("modalEditPlanId").value;
+      const plan = saasPlansCache.find(p => p.id === planId);
+      const planName = plan ? plan.name : planId;
+
+      if (!confirm(`⚠️ تأكيد حذف الخطة:\nهل أنت متأكد من حذف باقة "${planName}" نهائياً من المنصة؟`)) {
+        return;
+      }
+
+      try {
+        const res = await authFetch(`/api/v1/admin/plans/${planId}`, { method: "DELETE" });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل حذف الخطة");
+        }
+
+        const data = await res.json();
+        alert(`✅ ${data.message}`);
+        closeEditPlanModal();
+        fetchPlatformPlans();
+      } catch (err) {
+        alert(`❌ خطأ: ${err.message}`);
       }
     });
   }

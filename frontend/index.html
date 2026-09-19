@@ -291,6 +291,28 @@
 
       </div>
 
+      <!-- SaaS Subscription Plans Management Section -->
+      <div class="glass-card rounded-2xl border border-slate-800 p-4 sm:p-6 space-y-4 shadow-xl">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <i data-lucide="package" class="w-5 h-5 text-indigo-400"></i>
+              <span>باقات وخطط الاشتراك السحابية (Subscription Plans &amp; Pricing)</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">تخصيص أسعار الاشتراكات الشهرية، حدود الفروع والمستخدمين، وميزات البوت والفوترة والتقارير</p>
+          </div>
+          <button type="button" id="saasAddNewPlanBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-indigo-600/20 active:scale-95 self-start sm:self-auto">
+            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+            <span>إنشاء خطة جديدة</span>
+          </button>
+        </div>
+
+        <!-- Plans Cards Grid -->
+        <div id="saasPlansCardsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- Loaded dynamically via fetchPlatformPlans() -->
+        </div>
+      </div>
+
       <!-- Organizations Management Table Section -->
       <div class="glass-card rounded-2xl border border-slate-800 p-4 sm:p-6 space-y-4 shadow-xl">
         
@@ -2031,10 +2053,298 @@
 
         <div id="publicResetAlert" class="hidden p-3 rounded-xl text-xs text-right font-semibold"></div>
 
-        <button type="submit" id="submitPublicResetBtn" class="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 active:scale-95 transition cursor-pointer">
-          <i data-lucide="check-circle" class="w-4 h-4"></i>
-          <span>تعيين كلمة المرور وحفظها</span>
+  <!-- 6. Super Admin Create User Modal -->
+  <div id="adminCreateUserModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-indigo-500/30 w-full max-w-lg rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">إضافة مستخدم جديد للنظام (Add User)</h3>
+            <p class="text-[11px] text-slate-400">إنشاء حساب جديد وتعيين صلاحياته والمنشأة التابع لها</p>
+          </div>
+        </div>
+        <button type="button" id="closeAdminCreateUserModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
         </button>
+      </div>
+
+      <form id="adminCreateUserModalForm" class="space-y-3.5 text-xs">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2">
+            <label class="block text-slate-300 font-medium mb-1">المنشأة التابع لها هذا المستخدم: *</label>
+            <select id="modalAdminUserOrgSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <!-- Loaded dynamically -->
+            </select>
+            <span class="text-[10px] text-slate-500">اختر "المنصة المركزية" لحسابات مالكي المنصة (Super Admin)</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">اسم المستخدم (Username): *</label>
+            <input type="text" id="modalAdminUserUsername" required dir="ltr" placeholder="khaled_cashier" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الاسم الكامل: *</label>
+            <input type="text" id="modalAdminUserFullName" required placeholder="خالد العمري - كاشير" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">البريد الإلكتروني (اختياري):</label>
+            <input type="email" id="modalAdminUserEmail" dir="ltr" placeholder="user@company.jo" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الدور والصلاحية (Role): *</label>
+            <select id="modalAdminUserRole" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <option value="CASHIER">🛒 كاشير فروع (إدخال ورفع فواتير فقط)</option>
+              <option value="ACCOUNTANT">📊 محاسب قانوني (تدقيق وضرائب و JoFotara)</option>
+              <option value="ORG_ADMIN">🏢 مدير منشأة (إدارة أعمال المنشأة والبوت)</option>
+              <option value="SUPER_ADMIN">👑 مالك منصة (صلاحيات كاملة عليا)</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="block text-slate-300 font-medium mb-1">كلمة المرور الأولية: *</label>
+            <input type="password" id="modalAdminUserPass" required dir="ltr" placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm" />
+          </div>
+        </div>
+
+        <div id="adminCreateUserAlert" class="hidden p-3 rounded-xl text-xs font-semibold"></div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <button type="button" id="cancelAdminCreateUserModalBtn" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold cursor-pointer">إلغاء</button>
+          <button type="submit" id="submitAdminCreateUserModalBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition shadow-md shadow-indigo-600/30 cursor-pointer">حفظ وإنشاء المستخدم</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 7. Create Subscription Plan Modal -->
+  <div id="createPlanModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-indigo-500/30 w-full max-w-xl rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+            <i data-lucide="package-plus" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">إنشاء باقة اشتراك جديدة (New Plan)</h3>
+            <p class="text-[11px] text-slate-400">تحديد اسم الخطة، الأسعار بالدينار، الحدود والميزات المتاحة</p>
+          </div>
+        </div>
+        <button type="button" id="closeCreatePlanModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="createPlanModalForm" class="space-y-3.5 text-xs">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">رمز الخطة الفريد (Code): *</label>
+            <input type="text" id="modalNewPlanCode" required dir="ltr" placeholder="VIP_PLUS" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white uppercase focus:outline-none focus:border-indigo-500" />
+            <span class="text-[10px] text-slate-500">حروف وأرقام إنجليزية (مثال: PRO, VIP)</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">اسم الخطة بالعربية (Display Name): *</label>
+            <input type="text" id="modalNewPlanName" required placeholder="باقة كبار العملاء (VIP Plus)" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">السعر الشهري (د.أ): *</label>
+            <input type="number" id="modalNewPlanPriceMonthly" step="0.5" required min="0" value="49" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">السعر السنوي (د.أ): *</label>
+            <input type="number" id="modalNewPlanPriceAnnual" step="1" min="0" value="490" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الأقصى للفروع: *</label>
+            <input type="number" id="modalNewPlanBranches" required min="-1" value="3" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-[10px] text-slate-500">اكتب -1 للفروع غير المحدودة</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الأقصى للمستخدمين: *</label>
+            <input type="number" id="modalNewPlanUsers" required min="-1" value="10" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-[10px] text-slate-500">اكتب -1 للمستخدمين غير المحدودين</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الشهري للفواتير/العمليات: *</label>
+            <input type="number" id="modalNewPlanTx" required min="-1" value="5000" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-[10px] text-slate-500">اكتب -1 للعمليات غير المحدودة</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">لون شارة الباقة:</label>
+            <select id="modalNewPlanBadgeColor" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <option value="emerald">🟢 أخضر زمردي (Emerald)</option>
+              <option value="indigo">🔵 نيلي مميز (Indigo)</option>
+              <option value="purple">🟣 بنفسجي ملكي (Purple)</option>
+              <option value="amber">🟡 ذهبي/برتقالي (Amber)</option>
+              <option value="sky">🔷 أزرق سماوي (Sky)</option>
+              <option value="rose">🔴 وردي احترافي (Rose)</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="block text-slate-300 font-medium mb-1">وصف موجز ومميزات الباقة:</label>
+            <input type="text" id="modalNewPlanDesc" placeholder="مناسبة للمطاعم والأنشطة المتوسطة والكبيرة" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div class="sm:col-span-2 bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
+            <span class="block text-slate-300 font-bold mb-1">الميزات المشمولة في الباقة:</span>
+            <div class="grid grid-cols-2 gap-2 text-slate-300">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalNewPlanBot" checked class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🤖 بوت تلغرام مخصص ومستقل</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalNewPlanJoFotara" checked class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🧾 فك وتوليد فواتير JoFotara QR</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalNewPlanBrief" checked class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🧠 ملخص ذكاء اصطناعي يومي</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalNewPlanTax" checked class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>📑 تقارير الإقرار الضريبي الرسمي</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div id="createPlanAlert" class="hidden p-3 rounded-xl text-xs font-semibold"></div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <button type="button" id="cancelCreatePlanModalBtn" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold cursor-pointer">إلغاء</button>
+          <button type="submit" id="submitCreatePlanModalBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition shadow-md shadow-indigo-600/30 cursor-pointer">إنشاء وحفظ الخطة</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 8. Edit Subscription Plan Modal -->
+  <div id="editPlanModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-indigo-500/30 w-full max-w-xl rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+            <i data-lucide="edit" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">تعديل باقة الاشتراك (Edit Plan)</h3>
+            <p class="text-[11px] text-slate-400">تعديل الأسعار والميزات وحدود الفروع والمستخدمين</p>
+          </div>
+        </div>
+        <button type="button" id="closeEditPlanModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="editPlanModalForm" class="space-y-3.5 text-xs">
+        <input type="hidden" id="modalEditPlanId" />
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-400 font-medium mb-1">رمز الخطة (غير قابل للتعديل):</label>
+            <input type="text" id="modalEditPlanCode" disabled class="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-3 py-2 text-slate-400 cursor-not-allowed font-mono font-bold" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">اسم الخطة بالعربية: *</label>
+            <input type="text" id="modalEditPlanName" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">السعر الشهري (د.أ): *</label>
+            <input type="number" id="modalEditPlanPriceMonthly" step="0.5" required min="0" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">السعر السنوي (د.أ): *</label>
+            <input type="number" id="modalEditPlanPriceAnnual" step="1" min="0" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الأقصى للفروع: *</label>
+            <input type="number" id="modalEditPlanBranches" required min="-1" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الأقصى للمستخدمين: *</label>
+            <input type="number" id="modalEditPlanUsers" required min="-1" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الحد الشهري للفواتير: *</label>
+            <input type="number" id="modalEditPlanTx" required min="-1" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">لون شارة الباقة:</label>
+            <select id="modalEditPlanBadgeColor" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <option value="emerald">🟢 أخضر زمردي (Emerald)</option>
+              <option value="indigo">🔵 نيلي مميز (Indigo)</option>
+              <option value="purple">🟣 بنفسجي ملكي (Purple)</option>
+              <option value="amber">🟡 ذهبي/برتقالي (Amber)</option>
+              <option value="sky">🔷 أزرق سماوي (Sky)</option>
+              <option value="rose">🔴 وردي احترافي (Rose)</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="block text-slate-300 font-medium mb-1">الوصف والمميزات:</label>
+            <input type="text" id="modalEditPlanDesc" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div class="sm:col-span-2 bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-300 font-bold">الميزات وحالة الخطة:</span>
+              <label class="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-emerald-400">
+                <input type="checkbox" id="modalEditPlanIsActive" class="rounded border-slate-700 text-emerald-600 focus:ring-0" />
+                <span>الخطة مفعلة ومتاحة للاشتراك</span>
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-slate-300 pt-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalEditPlanBot" class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🤖 بوت تلغرام مخصص</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalEditPlanJoFotara" class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🧾 فواتير JoFotara QR</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalEditPlanBrief" class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>🧠 ملخص ذكاء اصطناعي</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="modalEditPlanTax" class="rounded border-slate-700 text-indigo-600 focus:ring-0" />
+                <span>📑 تقارير الإقرار الضريبي</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div id="editPlanAlert" class="hidden p-3 rounded-xl text-xs font-semibold"></div>
+
+        <div class="flex justify-between items-center pt-2 border-t border-slate-800">
+          <button type="button" id="deletePlanModalBtn" class="px-3 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-500/30 text-rose-300 font-semibold transition cursor-pointer flex items-center gap-1">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>حذف الخطة</span>
+          </button>
+          <div class="flex gap-2">
+            <button type="button" id="cancelEditPlanModalBtn" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold cursor-pointer">إلغاء</button>
+            <button type="submit" id="submitEditPlanModalBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition shadow-md shadow-indigo-600/30 cursor-pointer">حفظ التعديلات</button>
+          </div>
+        </div>
       </form>
     </div>
   </div>

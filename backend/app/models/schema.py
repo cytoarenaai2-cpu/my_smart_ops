@@ -18,6 +18,27 @@ class UserRoleEnum:
     CASHIER = "CASHIER"          # كاشير / موظف فرع
 
 
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(50), unique=True, index=True, nullable=False)  # TRIAL, BASIC, PRO, ENTERPRISE, CUSTOM
+    name = Column(String(100), nullable=False)                          # اسم الخطة بالعربية
+    description = Column(Text, nullable=True)                          # وصف الخطة
+    price_monthly_jod = Column(Float, default=0.0)                     # السعر الشهري بالدينار الأردني
+    price_annual_jod = Column(Float, default=0.0)                      # السعر السنوي بالدينار الأردني
+    max_branches = Column(Integer, default=1)                          # أقصى عدد فروع (-1 يعني غير محدود)
+    max_users = Column(Integer, default=3)                             # أقصى عدد مستخدمين (-1 يعني غير محدود)
+    max_transactions_monthly = Column(Integer, default=1000)           # الحد الشهري للعمليات (-1 يعني غير محدود)
+    has_telegram_bot = Column(Boolean, default=True)                   # بوت تلغرام مخصص
+    has_jofotara_qr = Column(Boolean, default=True)                    # فك وترميز فواتير JoFotara
+    has_ai_daily_brief = Column(Boolean, default=True)                 # تقارير الذكاء الاصطناعي اليومية
+    has_tax_reports = Column(Boolean, default=True)                    # تقارير الإقرار الضريبي الرسمي
+    badge_color = Column(String(30), default="emerald")                # لون الشارة في الواجهة
+    is_active = Column(Boolean, default=True)                          # الخطة متاحة للاشتراك
+    created_at = Column(DateTime, default=utc_now)
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
