@@ -226,3 +226,122 @@ def test_primary_super_admin_super_powers_and_protection():
     assert deleted_check is None
     db2.close()
 
+
+def test_super_admins_can_edit_user_roles_and_details():
+    db = SessionLocal()
+    org = db.query(Organization).first()
+    assert org is not None
+    org_id = org.id
+
+    # 1. Setup root admin
+    root = db.query(User).filter(User.username == "root_editor_test").first()
+    if not root:
+        root = User(
+            username="root_editor_test",
+            full_name="Root Editor",
+            role=UserRoleEnum.SUPER_ADMIN,
+            is_active=True,
+            is_primary_owner=True,
+            hashed_password=hash_password("RootPass@123")
+        )
+        db.add(root)
+    else:
+        root.is_primary_owner = True
+        root.role = UserRoleEnum.SUPER_ADMIN
+
+    # 2. Setup secondary super admin
+    sec = db.query(User).filter(User.username == "sec_editor_test").first()
+    if not sec:
+        sec = User(
+            username="sec_editor_test",
+            full_name="Secondary Editor",
+            role=UserRoleEnum.SUPER_ADMIN,
+            is_active=True,
+            is_primary_owner=False,
+            hashed_password=hash_password("SecPass@123")
+        )
+        db.add(sec)
+    else:
+        sec.is_primary_owner = False
+        sec.role = UserRoleEnum.SUPER_ADMIN
+
+    # 3. Setup target regular user (cashier)
+    target = db.query(User).filter(User.username == "editable_cashier").first()
+    if not target:
+        target = User(
+            username="editable_cashier",
+            full_name="كاشير قبل التعديل",
+            email="before_edit@store.jo",
+            role=UserRoleEnum.CASHIER,
+            organization_id=org_id,
+            is_active=True,
+            is_primary_owner=False,
+            hashed_password=hash_password("Cashier@123")
+        )
+        db.add(target)
+    else:
+        target.role = UserRoleEnum.CASHIER
+        target.full_name = "كاشير قبل التعديل"
+
+    db.commit()
+    db.refresh(root)
+    db.refresh(sec)
+    db.refresh(target)
+
+    root_id = root.id
+    sec_id = sec.id
+    target_id = target.id
+    db.close()
+
+    root_token = create_access_token({"sub": root_id, "username": "root_editor_test", "role": UserRoleEnum.SUPER_ADMIN})
+    root_headers = {"Authorization": f"Bearer {root_token}"}
+
+    sec_token = create_access_token({"sub": sec_id, "username": "sec_editor_test", "role": UserRoleEnum.SUPER_ADMIN})
+    sec_headers = {"Authorization": f"Bearer {sec_token}"}
+
+    # Case A: Root Super Admin edits cashier's full name and promotes to ACCOUNTANT
+    res1 = client.put(f"/api/v1/admin/users/{target_id}", headers=root_headers, json={
+        "full_name": "محاسب قانوني بعد الترقية",
+        "role": UserRoleEnum.ACCOUNTANT,
+        "organization_id": org_id
+    })
+    assert res1.status_code == 200
+    assert res1.json()["user"]["role"] == UserRoleEnum.ACCOUNTANT
+    assert res1.json()["user"]["full_name"] == "محاسب قانوني بعد الترقية"
+
+    # Case B: Secondary Super Admin can also edit user and promote to ORG_ADMIN
+    res2 = client.put(f"/api/v1/admin/users/{target_id}", headers=sec_headers, json={
+        "full_name": "مدير منشأة معتمد",
+        "role": UserRoleEnum.ORG_ADMIN,
+        "organization_id": org_id
+    })
+    assert res2.status_code == 200
+    assert res2.json()["user"]["role"] == UserRoleEnum.ORG_ADMIN
+    assert res2.json()["user"]["full_name"] == "مدير منشأة معتمد"
+
+    # Case C: Secondary Super Admin tries to demote or edit the Primary Super Admin -> 403 Forbidden
+    res_demote = client.put(f"/api/v1/admin/users/{root_id}", headers=sec_headers, json={
+        "role": UserRoleEnum.CASHIER,
+        "organization_id": org_id
+    })
+    assert res_demote.status_code == 403
+    assert "المالك الأساسي" in res_demote.json()["detail"]
+
+    res_edit_root = client.put(f"/api/v1/admin/users/{root_id}", headers=sec_headers, json={
+        "full_name": "Hacked Name"
+    })
+    assert res_edit_root.status_code == 403
+    assert "المالك الأساسي" in res_edit_root.json()["detail"]
+
+    # Case D: Primary Super Admin can edit their own details, but cannot demote their own role
+    res_self_edit = client.put(f"/api/v1/admin/users/{root_id}", headers=root_headers, json={
+        "full_name": "مالك المنصة الأعلى"
+    })
+    assert res_self_edit.status_code == 200
+    assert res_self_edit.json()["user"]["full_name"] == "مالك المنصة الأعلى"
+
+    res_self_demote = client.put(f"/api/v1/admin/users/{root_id}", headers=root_headers, json={
+        "role": UserRoleEnum.CASHIER
+    })
+    assert res_self_demote.status_code == 403
+

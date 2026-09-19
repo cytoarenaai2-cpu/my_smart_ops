@@ -104,6 +104,16 @@ class CreateUserRequest(BaseModel):
     role: str = UserRoleEnum.CASHIER
 
 
+class UpdateUserRequest(BaseModel):
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    organization_id: Optional[str] = None
+    is_active: Optional[bool] = None
+    new_password: Optional[str] = None
+
+
 class AdminProfileUpdateRequest(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
@@ -1024,3 +1034,116 @@ def delete_or_toggle_user(
     db.delete(user)
     db.commit()
     return {"message": f"تم حذف المستخدم '{user.username}' بنجاح."}
+
+
+@router.put("/users/{user_id}")
+def update_user_details_and_role(
+    user_id: str,
+    req: UpdateUserRequest,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    تعديل بيانات المستخدم، الأدوار والصلاحيات (RBAC)، والمنشأة التابع لها.
+    متاح لكافة مالكي المنصة (Super Admins) مع حماية أمنية مشددة لرتبة وبيانات المالك الأساسي.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
+
+    # حماية المالك الأساسي ذو الصلاحية المطلقة (Super Power)
+    if getattr(user, "is_primary_owner", False):
+        # المالك الأساسي لا يمكن لمالك آخر تعديل بياناته
+        if current_admin.id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="محظور أمنياً: لا يمكن للمالكين الآخرين تعديل بيانات أو صلاحيات المالك الأساسي للمنصة."
+            )
+        # ولا يمكن تنزيل رتبة المالك الأساسي
+        if req.role and req.role != UserRoleEnum.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="محظور أمنياً: لا يمكن تغيير أو تنزيل رتبة المالك الأساسي للمنصة."
+            )
+
+    # التحقق من اسم المستخدم الجديد إن تم تغييره
+    if req.username:
+        clean_username = req.username.strip()
+        if clean_username.lower() != user.username.lower():
+            existing = db.query(User).filter(User.username.ilike(clean_username), User.id != user_id).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"اسم المستخدم '{clean_username}' محجوز مسبقاً لمستخدم آخر."
+                )
+            user.username = clean_username
+
+    # تحديث الاسم الكامل
+    if req.full_name is not None:
+        user.full_name = req.full_name.strip()
+
+    # تحديث البريد الإلكتروني
+    if req.email is not None:
+        user.email = req.email.strip() if req.email.strip() else None
+
+    # تحديث الدور والمنشأة
+    if req.role:
+        allowed_roles = [UserRoleEnum.SUPER_ADMIN, UserRoleEnum.ORG_ADMIN, UserRoleEnum.ACCOUNTANT, UserRoleEnum.CASHIER]
+        if req.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"الرتبة المحددة غير صالحة. الرتب المسموحة هي: {', '.join(allowed_roles)}"
+            )
+
+        if req.role == UserRoleEnum.SUPER_ADMIN:
+            user.organization_id = None
+        else:
+            if req.organization_id is not None:
+                user.organization_id = req.organization_id.strip() if req.organization_id.strip() else None
+            if not user.organization_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="يجب ربط المستخدم برتبة (مدير، محاسب، كاشير) بمنشأة تجارية محددة."
+                )
+        user.role = req.role
+    elif req.organization_id is not None:
+        if user.role != UserRoleEnum.SUPER_ADMIN:
+            user.organization_id = req.organization_id.strip() if req.organization_id.strip() else None
+
+    # تحديث حالة التفعيل
+    if req.is_active is not None:
+        if getattr(user, "is_primary_owner", False) and not req.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="لا يمكن تعطيل حساب المالك الأساسي للمنصة."
+            )
+        user.is_active = req.is_active
+
+    # تحديث كلمة المرور إن أُرسلت
+    if req.new_password:
+        if len(req.new_password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="يجب ألا تقل كلمة المرور عن 6 خانات."
+            )
+        user.hashed_password = hash_password(req.new_password)
+        user.reset_token = None
+        user.reset_token_expires_at = None
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": f"تم تحديث بيانات وصلاحيات المستخدم '{user.username}' بنجاح!",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "is_primary_owner": bool(getattr(user, "is_primary_owner", False)),
+            "organization_id": user.organization_id,
+            "organization_name": user.organization.name if user.organization else "مالك المنصة (النظام العام)"
+        }
+    }

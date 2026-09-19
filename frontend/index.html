@@ -2206,6 +2206,86 @@
     </div>
   </div>
 
+  <!-- 6.5 Super Admin Edit User Modal -->
+  <div id="adminEditUserModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-indigo-500/30 w-full max-w-lg rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+            <i data-lucide="user-cog" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">تعديل بيانات وصلاحيات المستخدم (Edit User &amp; Role)</h3>
+            <p class="text-[11px] text-slate-400">تعديل الاسم، الدور والصلاحيات، المنشأة التابع لها وحالة الحساب</p>
+          </div>
+        </div>
+        <button type="button" id="closeAdminEditUserModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="adminEditUserModalForm" class="space-y-3.5 text-xs">
+        <input type="hidden" id="modalEditUserId" />
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2">
+            <label class="block text-slate-300 font-medium mb-1">المنشأة التابع لها هذا المستخدم:</label>
+            <select id="modalEditUserOrgSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <!-- Loaded dynamically -->
+            </select>
+            <span class="text-[10px] text-slate-500">لحسابات مالكي المنصة (Super Admin)، يتم اختيار "المنصة المركزية" تلقائياً</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">اسم المستخدم (Username): *</label>
+            <input type="text" id="modalEditUserUsername" required dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الاسم الكامل: *</label>
+            <input type="text" id="modalEditUserFullName" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">البريد الإلكتروني:</label>
+            <input type="email" id="modalEditUserEmail" dir="ltr" placeholder="user@company.jo" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">الدور والصلاحية (Role): *</label>
+            <select id="modalEditUserRole" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-bold">
+              <option value="CASHIER">🛒 كاشير فروع (إدخال ورفع فواتير فقط)</option>
+              <option value="ACCOUNTANT">📊 محاسب قانوني (تدقيق وضرائب و JoFotara)</option>
+              <option value="ORG_ADMIN">🏢 مدير منشأة (إدارة أعمال المنشأة)</option>
+              <option value="SUPER_ADMIN">👑 مالك منصة (صلاحيات كاملة عليا)</option>
+            </select>
+            <span id="modalEditUserRoleNotice" class="hidden text-[10px] text-amber-400 font-medium mt-0.5">🔒 رتبة المالك الأساسي مقفلة أمنياً</span>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">حالة الحساب: *</label>
+            <select id="modalEditUserStatus" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-bold">
+              <option value="active">🟢 حساب نشط وفعال</option>
+              <option value="inactive">🔴 حساب معطل ومجمد</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">كلمة مرور جديدة (اتركه فارغاً للإبقاء):</label>
+            <input type="password" id="modalEditUserNewPass" dir="ltr" placeholder="اتركه فارغاً إن لم ترغب بتغييرها" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm" />
+          </div>
+        </div>
+
+        <div id="adminEditUserAlert" class="hidden p-3 rounded-xl text-xs font-semibold"></div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <button type="button" id="cancelAdminEditUserModalBtn" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold cursor-pointer">إلغاء</button>
+          <button type="submit" id="submitAdminEditUserModalBtn" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition shadow-md shadow-indigo-600/30 cursor-pointer">حفظ التعديلات</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- 7. Create Subscription Plan Modal -->
   <div id="createPlanModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 overflow-y-auto">
     <div class="glass-card bg-slate-900 border border-indigo-500/30 w-full max-w-xl rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
@@ -2433,7 +2513,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20260919_v15"></script>
+  <script src="/static/app.js?v=20260919_v16"></script>
   <script>
     lucide.createIcons();
   </script>

@@ -12,6 +12,7 @@ let inspectingOrgData = null;
 let saasOrgsCache = [];
 let saasPlatformSummary = null;
 let selectedOrgForPasswordModal = null;
+let cachedPlatformUsers = [];
 
 const INDUSTRY_LABELS = {
   "restaurant": "مطاعم وكافيهات",
@@ -2721,6 +2722,7 @@ async function fetchPlatformUsers() {
     const res = await authFetch("/api/v1/admin/users");
     if (!res.ok) throw new Error("فشل جلب قائمة المستخدمين");
     const users = await res.json();
+    cachedPlatformUsers = users;
 
     const countBadge = document.getElementById("platformUsersCountBadge");
     if (countBadge) countBadge.textContent = `${users.length} مستخدم`;
@@ -2749,6 +2751,9 @@ async function fetchPlatformUsers() {
         // Primary Owner is strictly protected
         if (currentUser && currentUser.id === u.id) {
           actionsHtml = `
+            <button type="button" onclick="window.openEditUserModal('${u.id}')" title="تعديل بيانات حسابك" class="p-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition cursor-pointer">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+            </button>
             <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="تغيير كلمة المرور الخاصة بك" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
               <i data-lucide="key" class="w-3.5 h-3.5"></i>
             </button>
@@ -2768,6 +2773,9 @@ async function fetchPlatformUsers() {
       } else if (u.role === 'SUPER_ADMIN') {
         // Other platform owners
         actionsHtml = `
+          <button type="button" onclick="window.openEditUserModal('${u.id}')" title="تعديل بيانات ورتبة مالك المنصة" class="p-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition cursor-pointer">
+            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+          </button>
           <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
             <i data-lucide="key" class="w-3.5 h-3.5"></i>
           </button>
@@ -2784,6 +2792,9 @@ async function fetchPlatformUsers() {
       } else {
         // Regular tenant users (ORG_ADMIN, ACCOUNTANT, CASHIER)
         actionsHtml = `
+          <button type="button" onclick="window.openEditUserModal('${u.id}')" title="تعديل بيانات ورتبة المستخدم" class="p-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition cursor-pointer">
+            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+          </button>
           <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
             <i data-lucide="key" class="w-3.5 h-3.5"></i>
           </button>
@@ -2819,6 +2830,105 @@ async function fetchPlatformUsers() {
     tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
   }
 }
+
+window.openEditUserModal = async (userId) => {
+  const user = cachedPlatformUsers.find(u => u.id === userId);
+  if (!user) {
+    alert("لم يتم العثور على بيانات المستخدم");
+    return;
+  }
+
+  const modal = document.getElementById("adminEditUserModal");
+  if (!modal) return;
+
+  const alertEl = document.getElementById("adminEditUserAlert");
+  if (alertEl) {
+    alertEl.className = "hidden p-3 rounded-xl text-xs font-semibold";
+    alertEl.textContent = "";
+  }
+
+  const idInp = document.getElementById("modalEditUserId");
+  const userInp = document.getElementById("modalEditUserUsername");
+  const nameInp = document.getElementById("modalEditUserFullName");
+  const emailInp = document.getElementById("modalEditUserEmail");
+  const passInp = document.getElementById("modalEditUserNewPass");
+
+  if (idInp) idInp.value = user.id;
+  if (userInp) userInp.value = user.username;
+  if (nameInp) nameInp.value = user.full_name || "";
+  if (emailInp) emailInp.value = user.email || "";
+  if (passInp) passInp.value = "";
+
+  const roleSelect = document.getElementById("modalEditUserRole");
+  const roleNotice = document.getElementById("modalEditUserRoleNotice");
+  if (roleSelect) {
+    roleSelect.value = user.role;
+    if (user.is_primary_owner) {
+      roleSelect.disabled = true;
+      if (roleNotice) roleNotice.classList.remove("hidden");
+    } else {
+      roleSelect.disabled = false;
+      if (roleNotice) roleNotice.classList.add("hidden");
+    }
+  }
+
+  const statusSelect = document.getElementById("modalEditUserStatus");
+  if (statusSelect) {
+    statusSelect.value = user.is_active ? "active" : "inactive";
+    if (user.is_primary_owner) {
+      statusSelect.disabled = true;
+    } else {
+      statusSelect.disabled = false;
+    }
+  }
+
+  // Populate Orgs
+  const orgSelect = document.getElementById("modalEditUserOrgSelect");
+  if (orgSelect) {
+    let orgsHtml = `<option value="">المنصة المركزية (مالك منصة / نظام عام)</option>`;
+    if (Array.isArray(saasOrgsCache)) {
+      saasOrgsCache.forEach(org => {
+        const sel = (user.organization_id === org.id) ? "selected" : "";
+        orgsHtml += `<option value="${org.id}" ${sel}>🏢 ${org.name}</option>`;
+      });
+    }
+    orgSelect.innerHTML = orgsHtml;
+    if (user.role === "SUPER_ADMIN") {
+      orgSelect.value = "";
+      orgSelect.disabled = true;
+    } else {
+      orgSelect.disabled = false;
+      orgSelect.value = user.organization_id || "";
+    }
+  }
+
+  // Live change on role select
+  if (roleSelect && orgSelect) {
+    roleSelect.onchange = () => {
+      if (roleSelect.value === "SUPER_ADMIN") {
+        orgSelect.value = "";
+        orgSelect.disabled = true;
+      } else {
+        orgSelect.disabled = false;
+        if (!orgSelect.value && saasOrgsCache.length > 0) {
+          orgSelect.value = saasOrgsCache[0].id;
+        }
+      }
+    };
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+};
+
+window.closeAdminEditUserModal = () => {
+  const modal = document.getElementById("adminEditUserModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+};
 
 window.openUserPasswordModal = (userId, username, fullName) => {
   selectedOrgForPasswordModal = {
@@ -3684,6 +3794,86 @@ function setupSuperAdminConsole() {
           fetchPlatformUsers();
           fetchPlatformOrganizations();
         }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 10.5 Edit User Modal Wireup
+  const editUserModal = document.getElementById("adminEditUserModal");
+  const closeEditUserBtn = document.getElementById("closeAdminEditUserModalBtn");
+  const cancelEditUserBtn = document.getElementById("cancelAdminEditUserModalBtn");
+  const editUserForm = document.getElementById("adminEditUserModalForm");
+
+  if (closeEditUserBtn) closeEditUserBtn.addEventListener("click", window.closeAdminEditUserModal);
+  if (cancelEditUserBtn) cancelEditUserBtn.addEventListener("click", window.closeAdminEditUserModal);
+
+  if (editUserModal) {
+    editUserModal.addEventListener("click", (e) => {
+      if (e.target === editUserModal) window.closeAdminEditUserModal();
+    });
+  }
+
+  if (editUserForm) {
+    editUserForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const userId = document.getElementById("modalEditUserId").value;
+      const submitBtn = document.getElementById("submitAdminEditUserModalBtn");
+      const alertBox = document.getElementById("adminEditUserAlert");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري حفظ التعديلات...</span>`;
+      }
+
+      try {
+        const payload = {
+          username: document.getElementById("modalEditUserUsername").value.trim(),
+          full_name: document.getElementById("modalEditUserFullName").value.trim(),
+          email: document.getElementById("modalEditUserEmail").value.trim() || null,
+          role: document.getElementById("modalEditUserRole").value,
+          organization_id: document.getElementById("modalEditUserOrgSelect").value || null,
+          is_active: document.getElementById("modalEditUserStatus").value === "active"
+        };
+
+        const newPass = document.getElementById("modalEditUserNewPass").value.trim();
+        if (newPass) {
+          payload.new_password = newPass;
+        }
+
+        const res = await authFetch(`/api/v1/admin/users/${userId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تعديل المستخدم");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+
+        setTimeout(() => {
+          window.closeAdminEditUserModal();
+          fetchPlatformUsers();
+        }, 800);
       } catch (err) {
         if (alertBox) {
           alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
