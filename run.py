@@ -38,8 +38,8 @@ async def main():
     try:
         await server.serve()
     finally:
-        for t in tasks:
-            t.cancel()
+        if not bot_init_task.done():
+            bot_init_task.cancel()
 
 if __name__ == "__main__":
     try:

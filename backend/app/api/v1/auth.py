@@ -184,3 +184,58 @@ def change_password(
     db.commit()
 
     return {"message": "تم تحديث كلمة المرور بنجاح!"}
+
+
+class ResetPasswordPublicRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/reset-password")
+def reset_password_with_token(
+    req: ResetPasswordPublicRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    إعادة تعيين كلمة المرور للمستخدم بواسطة رمز الأمان السري المؤقت (Reset Token) المرسل عبر الإيميل أو الرابط المباشر.
+    """
+    clean_token = req.token.strip()
+    if not clean_token:
+        raise HTTPException(status_code=400, detail="رمز إعادة التعيين مطلوب.")
+
+    user = db.query(User).filter(User.reset_token == clean_token).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="رمز إعادة تعيين كلمة المرور غير صالح أو تم استخدامه مسبقاً."
+        )
+
+    # التحقق من صلاحية الرمز الزمنية (24 ساعة)
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+    if user.reset_token_expires_at:
+        expires_at = user.reset_token_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if now_utc > expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="انتهت صلاحية رمز إعادة التعيين (أكثر من 24 ساعة). يرجى طلب رابط جديد من مالك المنصة."
+            )
+
+    if len(req.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="يجب أن تتكون كلمة المرور الجديدة من 6 خانات على الأقل."
+        )
+
+    user.hashed_password = hash_password(req.new_password)
+    user.reset_token = None
+    user.reset_token_expires_at = None
+    db.commit()
+
+    return {
+        "message": f"تم تعيين كلمة المرور بنجاح للمستخدم '{user.username}'! يمكنك الآن تسجيل الدخول.",
+        "username": user.username
+    }
+

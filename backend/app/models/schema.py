@@ -37,6 +37,14 @@ class Organization(Base):
     auto_daily_brief_enabled = Column(Boolean, default=True)
     daily_brief_time = Column(String(10), default="08:30")
     is_active = Column(Boolean, default=True)
+
+    # Phase 4 SaaS Subscription & Management fields
+    subscription_plan = Column(String(50), default="PRO")  # TRIAL, BASIC, PRO, ENTERPRISE
+    subscription_status = Column(String(30), default="ACTIVE")  # ACTIVE, TRIAL, SUSPENDED, EXPIRED
+    subscription_expires_at = Column(DateTime, nullable=True)
+    subscription_price_jod = Column(Float, default=0.0)
+    contact_email = Column(String(255), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
     
     created_at = Column(DateTime, default=utc_now)
 
@@ -58,6 +66,8 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(String(30), default=UserRoleEnum.ORG_ADMIN, nullable=False)  # SUPER_ADMIN, ORG_ADMIN, ACCOUNTANT, CASHIER
     is_active = Column(Boolean, default=True)
+    reset_token = Column(String(255), nullable=True)
+    reset_token_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now)
 
     organization = relationship("Organization", back_populates="users")

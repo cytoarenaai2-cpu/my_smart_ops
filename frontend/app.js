@@ -7,6 +7,11 @@ let currentToken = localStorage.getItem("smart_ops_token") || null;
 let currentUser = null;
 let selectedTenantOrgId = null;
 let platformOrgsList = [];
+let isInspectingTenant = false;
+let inspectingOrgData = null;
+let saasOrgsCache = [];
+let saasPlatformSummary = null;
+let selectedOrgForPasswordModal = null;
 
 const INDUSTRY_LABELS = {
   "restaurant": "مطاعم وكافيهات",
@@ -172,6 +177,8 @@ function handleLogout() {
   currentToken = null;
   currentUser = null;
   selectedTenantOrgId = null;
+  isInspectingTenant = false;
+  inspectingOrgData = null;
   localStorage.removeItem("smart_ops_token");
   openLoginModal();
 }
@@ -188,9 +195,19 @@ async function initAuthenticatedUser() {
     if (!res.ok) {
       throw new Error("Invalid token");
     }
-    currentUser = await res.json();
-    updateHeaderUserUI();
-    await fetchAllData();
+    const data = await res.json();
+    currentUser = data.user;
+    if (data.organization) {
+      currentOrgData = data.organization;
+    }
+
+    renderAppView();
+
+    if (currentUser.role === "SUPER_ADMIN" && !isInspectingTenant) {
+      await loadSuperAdminConsoleData();
+    } else {
+      await fetchAllData();
+    }
     return true;
   } catch (err) {
     console.warn("initAuthenticatedUser failed:", err);
@@ -200,6 +217,93 @@ async function initAuthenticatedUser() {
     openLoginModal();
     return false;
   }
+}
+
+function renderAppView() {
+  const superAdminDashboard = document.getElementById("superAdminDashboardView");
+  const tenantDashboard = document.getElementById("tenantDashboardView");
+  const inspectionBanner = document.getElementById("tenantInspectionBanner");
+  const tenantHeaderActions = document.getElementById("tenantHeaderActions");
+  const superAdminHeaderActions = document.getElementById("superAdminHeaderActions");
+  const currentOrgBadge = document.getElementById("currentOrgBadge");
+  const headerPlatformSubtitle = document.getElementById("headerPlatformSubtitle");
+  const headerExitInspectionBtn = document.getElementById("headerExitInspectionBtn");
+  const headerMainTitle = document.getElementById("headerMainTitle");
+  const headerTitleBadge = document.getElementById("headerTitleBadge");
+
+  if (currentUser && currentUser.role === "SUPER_ADMIN") {
+    if (isInspectingTenant) {
+      // Viewing as tenant store
+      if (superAdminDashboard) superAdminDashboard.classList.add("hidden");
+      if (tenantDashboard) tenantDashboard.classList.remove("hidden");
+      if (inspectionBanner) inspectionBanner.classList.remove("hidden");
+      if (tenantHeaderActions) tenantHeaderActions.classList.remove("hidden");
+      if (superAdminHeaderActions) superAdminHeaderActions.classList.add("hidden");
+      if (currentOrgBadge) currentOrgBadge.classList.remove("hidden");
+      if (headerPlatformSubtitle) headerPlatformSubtitle.classList.add("hidden");
+      if (headerExitInspectionBtn) {
+        headerExitInspectionBtn.classList.remove("hidden");
+        headerExitInspectionBtn.classList.add("inline-flex");
+      }
+
+      const orgName = inspectingOrgData ? inspectingOrgData.name : (currentOrgData ? currentOrgData.name : "المنشأة");
+      const inspName = document.getElementById("inspectingOrgName");
+      if (inspName) inspName.textContent = orgName;
+
+      if (headerMainTitle) headerMainTitle.textContent = "المساعد المالي والتنفيذي الذكي";
+      if (headerTitleBadge) {
+        headerTitleBadge.textContent = "وضع المعاينة";
+        headerTitleBadge.className = "text-[10px] sm:text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full whitespace-nowrap";
+      }
+    } else {
+      // Platform Owner SaaS Command Center
+      if (superAdminDashboard) superAdminDashboard.classList.remove("hidden");
+      if (tenantDashboard) tenantDashboard.classList.add("hidden");
+      if (inspectionBanner) inspectionBanner.classList.add("hidden");
+      if (tenantHeaderActions) tenantHeaderActions.classList.add("hidden");
+      if (superAdminHeaderActions) {
+        superAdminHeaderActions.classList.remove("hidden");
+        superAdminHeaderActions.classList.add("flex");
+      }
+      if (currentOrgBadge) currentOrgBadge.classList.add("hidden");
+      if (headerPlatformSubtitle) {
+        headerPlatformSubtitle.classList.remove("hidden");
+        headerPlatformSubtitle.classList.add("inline-flex");
+      }
+      if (headerExitInspectionBtn) {
+        headerExitInspectionBtn.classList.add("hidden");
+        headerExitInspectionBtn.classList.remove("inline-flex");
+      }
+
+      if (headerMainTitle) headerMainTitle.textContent = "لوحة قيادة المنصة المركزية";
+      if (headerTitleBadge) {
+        headerTitleBadge.textContent = "SaaS Super Admin";
+        headerTitleBadge.className = "text-[10px] sm:text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full whitespace-nowrap";
+      }
+    }
+  } else {
+    // Normal tenant store users
+    if (superAdminDashboard) superAdminDashboard.classList.add("hidden");
+    if (tenantDashboard) tenantDashboard.classList.remove("hidden");
+    if (inspectionBanner) inspectionBanner.classList.add("hidden");
+    if (tenantHeaderActions) tenantHeaderActions.classList.remove("hidden");
+    if (superAdminHeaderActions) superAdminHeaderActions.classList.add("hidden");
+    if (currentOrgBadge) currentOrgBadge.classList.remove("hidden");
+    if (headerPlatformSubtitle) headerPlatformSubtitle.classList.add("hidden");
+    if (headerExitInspectionBtn) {
+      headerExitInspectionBtn.classList.add("hidden");
+      headerExitInspectionBtn.classList.remove("inline-flex");
+    }
+
+    if (headerMainTitle) headerMainTitle.textContent = "المساعد المالي والتنفيذي الذكي";
+    if (headerTitleBadge) {
+      headerTitleBadge.textContent = "بيانات حقيقية 100%";
+      headerTitleBadge.className = "text-[10px] sm:text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full whitespace-nowrap";
+    }
+  }
+
+  updateHeaderUserUI();
+  if (window.lucide) lucide.createIcons();
 }
 
 function updateHeaderUserUI() {
@@ -241,15 +345,6 @@ function updateHeaderUserUI() {
     }
   }
 
-  // Super Admin controls
-  const switcher = document.getElementById("superAdminOrgSwitcher");
-  if (currentUser.role === "SUPER_ADMIN") {
-    if (switcher) switcher.classList.remove("hidden");
-    loadPlatformOrganizations();
-  } else {
-    if (switcher) switcher.classList.add("hidden");
-  }
-
   if (window.lucide) lucide.createIcons();
 }
 
@@ -279,6 +374,7 @@ async function loadPlatformOrganizations() {
 // Initial Load
 document.addEventListener("DOMContentLoaded", async () => {
   setupAuthSystem();
+  setupSuperAdminConsole();
   setupSuperAdminModal();
   setupOrgSettingsModal();
   setupTransactionFilters();
@@ -289,6 +385,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupBatchModal();
   setupResetButton();
   setupJoFotaraModal();
+  checkPublicResetPasswordParam();
 
   const refreshBtn = document.getElementById("refreshBtn");
   if (refreshBtn) {
@@ -2030,66 +2127,267 @@ function setupSuperAdminModal() {
   }
 }
 
-async function loadAdminOrganizationsList() {
-  const tbody = document.getElementById("adminOrgsTableBody");
-  if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">جاري تحميل المنشآت...</td></tr>`;
+// ==========================================
+// Super Admin SaaS Console & Platform Management
+// ==========================================
 
+function checkPublicResetPasswordParam() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const resetToken = urlParams.get("reset_token");
+  if (resetToken) {
+    const modal = document.getElementById("publicResetPasswordModal");
+    const tokenHidden = document.getElementById("publicResetTokenHidden");
+    if (modal && tokenHidden) {
+      tokenHidden.value = resetToken;
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+async function loadSuperAdminConsoleData() {
+  await Promise.all([
+    fetchPlatformSummary(),
+    fetchPlatformOrganizations(),
+    fetchPlatformUsers()
+  ]);
+}
+
+async function fetchPlatformSummary() {
+  try {
+    const res = await authFetch("/api/v1/admin/platform-summary");
+    if (!res.ok) return;
+    const summary = await res.json();
+    saasPlatformSummary = summary;
+
+    const totalOrgsEl = document.getElementById("saasTotalOrgs");
+    if (totalOrgsEl) totalOrgsEl.textContent = summary.total_organizations;
+
+    const activeSubsEl = document.getElementById("saasActiveSubs");
+    if (activeSubsEl) activeSubsEl.textContent = summary.active_subscriptions;
+
+    const trialSubsEl = document.getElementById("saasTrialSubs");
+    if (trialSubsEl) trialSubsEl.textContent = summary.trial_subscriptions;
+
+    const expiredSubsEl = document.getElementById("saasExpiredSubs");
+    if (expiredSubsEl) expiredSubsEl.textContent = summary.expired_subscriptions;
+
+    const totalSalesEl = document.getElementById("saasTotalSales");
+    if (totalSalesEl) totalSalesEl.textContent = Number(summary.total_sales_volume).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+    const totalTxEl = document.getElementById("saasTotalTx");
+    if (totalTxEl) totalTxEl.textContent = summary.total_transactions;
+
+    const connectedBotsEl = document.getElementById("saasConnectedBots");
+    if (connectedBotsEl) connectedBotsEl.textContent = summary.connected_bots;
+
+    const mrrEl = document.getElementById("saasMrr");
+    if (mrrEl) mrrEl.textContent = Number(summary.monthly_revenue_jod).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  } catch (err) {
+    console.error("fetchPlatformSummary error:", err);
+  }
+}
+
+async function fetchPlatformOrganizations() {
+  const tbody = document.getElementById("saasOrgsTableBody");
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-slate-400">جاري تحميل بيانات المنشآت والاشتراكات...</td></tr>`;
+  }
   try {
     const res = await authFetch("/api/v1/admin/organizations");
     if (!res.ok) throw new Error("فشل جلب قائمة المنشآت");
     const orgs = await res.json();
+    saasOrgsCache = orgs;
     platformOrgsList = orgs;
-
-    if (!orgs || orgs.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">لا توجد منشآت مسجلة.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = orgs.map(o => {
-      const branchesList = (o.branches || []).map(b => b.name).join(", ") || "الفرع الرئيسي";
-      const botBadge = o.telegram_bot_token 
-        ? `<span class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-mono text-[10px]">🤖 مفعّل (${o.telegram_bot_token.slice(0, 8)}...)</span>`
-        : `<span class="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px]">⚠️ غير مسجل</span>`;
-      
-      const isSelected = selectedTenantOrgId === o.id;
-
-      return `
-        <tr class="hover:bg-slate-800/40 transition">
-          <td class="p-2.5 font-bold text-white flex items-center gap-1.5">
-            <span>${o.name}</span>
-            ${isSelected ? '<span class="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.2 rounded border border-purple-500/30">المعروضة حالياً</span>' : ''}
-          </td>
-          <td class="p-2.5 font-mono text-slate-300">${o.tax_number || '<span class="text-slate-500">غير مسجل</span>'}</td>
-          <td class="p-2.5 text-slate-300">${INDUSTRY_LABELS[o.industry_type] || o.industry_type}</td>
-          <td class="p-2.5 text-slate-400 text-[11px] max-w-[150px] truncate" title="${branchesList}">${branchesList}</td>
-          <td class="p-2.5">${botBadge}</td>
-          <td class="p-2.5 text-center">
-            <button onclick="window.selectTenantAndInspect('${o.id}')" class="bg-purple-950/70 hover:bg-purple-900 text-purple-200 border border-purple-500/30 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition active:scale-95 cursor-pointer">
-              معاينة كمنشأة
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join("");
+    filterAndRenderSaasTable();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
+    console.error("fetchPlatformOrganizations error:", err);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-rose-400">خطأ في التحميل: ${err.message}</td></tr>`;
+    }
   }
 }
 
-window.selectTenantAndInspect = (orgId) => {
-  selectedTenantOrgId = orgId;
-  const select = document.getElementById("superAdminOrgSelect");
-  if (select) select.value = orgId;
-  const modal = document.getElementById("superAdminModal");
-  if (modal) {
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
-  }
-  fetchAllData();
-};
+function filterAndRenderSaasTable() {
+  const tbody = document.getElementById("saasOrgsTableBody");
+  if (!tbody) return;
 
-async function loadAdminUsersList() {
+  const searchVal = (document.getElementById("saasSearchInput")?.value || "").trim().toLowerCase();
+  const statusVal = document.getElementById("saasStatusFilter")?.value || "ALL";
+  const planVal = document.getElementById("saasPlanFilter")?.value || "ALL";
+
+  let filtered = saasOrgsCache.filter(org => {
+    // Status filter
+    if (statusVal !== "ALL" && org.subscription_status !== statusVal) {
+      return false;
+    }
+    // Plan filter
+    if (planVal !== "ALL" && org.subscription_plan !== planVal) {
+      return false;
+    }
+    // Search query
+    if (searchVal) {
+      const name = (org.name || "").toLowerCase();
+      const tax = (org.tax_number || "").toLowerCase();
+      const adminName = (org.admin_user?.full_name || "").toLowerCase();
+      const adminUser = (org.admin_user?.username || "").toLowerCase();
+      const email = (org.contact_email || "").toLowerCase();
+      if (!name.includes(searchVal) && !tax.includes(searchVal) && !adminName.includes(searchVal) && !adminUser.includes(searchVal) && !email.includes(searchVal)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const countEl = document.getElementById("saasFilteredCount");
+  if (countEl) countEl.textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-slate-400">لا توجد منشآت مطابقة لمعايير البحث.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(o => {
+    const branchesCount = (o.branches || []).length;
+    const branchesBadge = branchesCount > 1 
+      ? `<span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded border border-slate-700">${branchesCount} فروع</span>`
+      : `<span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded border border-slate-700">فرع رئيسي</span>`;
+
+    // Plan styling
+    const planStyles = {
+      "PRO": { badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", label: "🟢 احترافية (PRO)" },
+      "BASIC": { badge: "bg-sky-500/20 text-sky-300 border-sky-500/30", label: "🔵 أساسية (BASIC)" },
+      "ENTERPRISE": { badge: "bg-purple-500/20 text-purple-300 border-purple-500/30", label: "🟣 مؤسسية (ENTERPRISE)" },
+      "TRIAL": { badge: "bg-amber-500/20 text-amber-300 border-amber-500/30", label: "🟡 تجريبية (TRIAL)" }
+    };
+    const pMeta = planStyles[o.subscription_plan] || { badge: "bg-slate-700 text-slate-300 border-slate-600", label: o.subscription_plan };
+
+    // Status styling
+    const statusStyles = {
+      "ACTIVE": { badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400", label: "نشط" },
+      "TRIAL": { badge: "bg-amber-500/20 text-amber-300 border-amber-500/30", dot: "bg-amber-400", label: "تجريبي" },
+      "EXPIRED": { badge: "bg-rose-500/20 text-rose-300 border-rose-500/30", dot: "bg-rose-400", label: "منتهي" },
+      "SUSPENDED": { badge: "bg-slate-700 text-slate-300 border-slate-600", dot: "bg-slate-400", label: "معلق" }
+    };
+    const sMeta = statusStyles[o.subscription_status] || { badge: "bg-slate-700 text-slate-300 border-slate-600", dot: "bg-slate-400", label: o.subscription_status };
+
+    // Days remaining badge
+    let daysRemainingBadge = "";
+    if (o.subscription_status === "SUSPENDED" || !o.is_active) {
+      daysRemainingBadge = `<span class="text-[10px] text-slate-400 font-mono">حساب موقوف</span>`;
+    } else if (o.days_remaining > 0) {
+      const color = o.days_remaining <= 7 ? "text-amber-400 font-bold" : "text-emerald-400";
+      daysRemainingBadge = `<span class="text-[11px] font-mono ${color}">متبقي ${o.days_remaining} يوم</span>`;
+    } else {
+      daysRemainingBadge = `<span class="text-[11px] font-mono text-rose-400 font-bold">انتهى الاشتراك</span>`;
+    }
+
+    // Dedicated bot badge
+    const botBadge = o.has_dedicated_bot 
+      ? `<span class="inline-flex items-center gap-1 bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]">🤖 متصل</span>`
+      : `<span class="text-[10px] text-slate-500 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">غير مرتبط</span>`;
+
+    const admin = o.admin_user || {};
+    const salesFormatted = Number(o.total_sales || 0).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <!-- 1. Org Info -->
+        <td class="p-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-purple-900/60 to-indigo-900/60 border border-purple-500/30 flex items-center justify-center flex-shrink-0">
+              <i data-lucide="building" class="w-4 h-4 text-purple-300"></i>
+            </div>
+            <div>
+              <div class="font-bold text-white text-xs flex items-center gap-1.5">
+                <span>${o.name}</span>
+                ${branchesBadge}
+              </div>
+              <div class="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                <span>${INDUSTRY_LABELS[o.industry_type] || o.industry_type}</span>
+                <span>•</span>
+                <span class="font-mono ${o.tax_number ? 'text-indigo-300' : 'text-slate-500'}">${o.tax_number || 'بدون ضريبي'}</span>
+              </div>
+            </div>
+          </div>
+        </td>
+
+        <!-- 2. Admin & Contact -->
+        <td class="p-3 text-[11px]">
+          <div class="font-semibold text-slate-200">${admin.full_name || 'مدير الحساب'}</div>
+          <div class="font-mono text-[10px] text-purple-300">@${admin.username || '-'}</div>
+          <div class="text-[10px] text-slate-400 truncate max-w-[140px] mt-0.5" title="${o.contact_email || ''}">${o.contact_email || ''}</div>
+        </td>
+
+        <!-- 3. Subscription Plan -->
+        <td class="p-3 text-center">
+          <span class="px-2 py-0.5 rounded-md text-[10px] font-bold border ${pMeta.badge}">
+            ${pMeta.label}
+          </span>
+          <div class="text-[11px] font-mono text-slate-300 mt-1">
+            ${o.subscription_price_jod} <span class="text-[9px] text-slate-500">د.أ/شهرياً</span>
+          </div>
+        </td>
+
+        <!-- 4. Status & Expiration -->
+        <td class="p-3 text-center">
+          <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${sMeta.badge}">
+            <span class="w-1.5 h-1.5 rounded-full ${sMeta.dot}"></span>
+            <span>${sMeta.label}</span>
+          </div>
+          <div class="mt-1">${daysRemainingBadge}</div>
+          <div class="text-[9px] text-slate-500 font-mono mt-0.5">${o.subscription_expires_at || 'غير محدد'}</div>
+        </td>
+
+        <!-- 5. Sales Volume -->
+        <td class="p-3 text-center">
+          <div class="font-extrabold text-white text-xs font-mono">${salesFormatted} <span class="text-[10px] font-normal text-slate-400">د.أ</span></div>
+          <div class="text-[10px] text-slate-500 font-mono mt-0.5">${o.transactions_count} حركة</div>
+        </td>
+
+        <!-- 6. Bot Token Status -->
+        <td class="p-3 text-center">
+          ${botBadge}
+        </td>
+
+        <!-- 7. Actions -->
+        <td class="p-3 text-center">
+          <div class="flex items-center justify-center gap-1">
+            <!-- View As Tenant -->
+            <button onclick="window.enterTenantView('${o.id}')" class="bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border border-indigo-500/40 p-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer" title="معاينة كمنشأة (الدخول لحساب المنشأة وتفقد مبيعاتها)">
+              <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+            </button>
+
+            <!-- Toggle Active / Suspend -->
+            <button onclick="window.toggleOrgStatus('${o.id}')" class="${o.is_active ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-300 border-amber-500/30' : 'bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border-emerald-500/30'} border p-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer" title="${o.is_active ? 'تعليق / إيقاف الحساب' : 'إعادة تفعيل الحساب'}">
+              <i data-lucide="${o.is_active ? 'pause' : 'play'}" class="w-3.5 h-3.5"></i>
+            </button>
+
+            <!-- Edit Subscription -->
+            <button onclick="window.openEditOrgModal('${o.id}')" class="bg-purple-950/70 hover:bg-purple-900 text-purple-200 border border-purple-500/30 p-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer" title="تعديل خطة الاشتراك والسعر والبيانات">
+              <i data-lucide="settings-2" class="w-3.5 h-3.5"></i>
+            </button>
+
+            <!-- Password Management -->
+            <button onclick="window.openTenantPasswordModal('${o.id}')" class="bg-blue-950/70 hover:bg-blue-900 text-blue-200 border border-blue-500/30 p-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer" title="إدارة كلمة المرور (تغيير مباشر أو رابط 24 ساعة)">
+              <i data-lucide="key" class="w-3.5 h-3.5"></i>
+            </button>
+
+            <!-- Delete Org -->
+            <button onclick="window.confirmDeleteOrg('${o.id}')" class="bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-500/30 p-1.5 rounded-lg text-xs font-semibold transition active:scale-95 cursor-pointer" title="حذف المنشأة بالكامل">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function fetchPlatformUsers() {
   const tbody = document.getElementById("adminUsersTableBody");
   if (!tbody) return;
   tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-slate-400">جاري تحميل المستخدمين...</td></tr>`;
@@ -2098,6 +2396,9 @@ async function loadAdminUsersList() {
     const res = await authFetch("/api/v1/admin/users");
     if (!res.ok) throw new Error("فشل جلب قائمة المستخدمين");
     const users = await res.json();
+
+    const countBadge = document.getElementById("platformUsersCountBadge");
+    if (countBadge) countBadge.textContent = `${users.length} مستخدم`;
 
     const roleMap = {
       "SUPER_ADMIN": { label: "👑 مالك المنصة", class: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
@@ -2128,3 +2429,681 @@ async function loadAdminUsersList() {
     tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-rose-400">خطأ: ${err.message}</td></tr>`;
   }
 }
+
+// Global actions exposed to window
+window.enterTenantView = async (orgId) => {
+  isInspectingTenant = true;
+  selectedTenantOrgId = orgId;
+  inspectingOrgData = saasOrgsCache.find(o => o.id === orgId) || null;
+  renderAppView();
+  await fetchAllData();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+window.exitTenantView = async () => {
+  isInspectingTenant = false;
+  selectedTenantOrgId = null;
+  inspectingOrgData = null;
+  renderAppView();
+  await loadSuperAdminConsoleData();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+window.toggleOrgStatus = async (orgId) => {
+  try {
+    const res = await authFetch(`/api/v1/admin/organizations/${orgId}/toggle-status`, { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "فشل تغيير حالة المنشأة");
+    }
+    await loadSuperAdminConsoleData();
+  } catch (err) {
+    alert(`❌ خطأ: ${err.message}`);
+  }
+};
+
+window.confirmDeleteOrg = async (orgId) => {
+  const org = saasOrgsCache.find(o => o.id === orgId);
+  const name = org ? org.name : orgId;
+  if (!confirm(`⚠️ تحذير أمني:\nهل أنت متأكد من حذف منشأة "${name}" بالكامل؟\nسيتم حذف كافة العمليات والفروع وحسابات المستخدمين التابعة لها ولا يمكن التراجع.`)) {
+    return;
+  }
+  try {
+    const res = await authFetch(`/api/v1/admin/organizations/${orgId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "فشل حذف المنشأة");
+    }
+    alert(`✅ تم حذف منشأة "${name}" بنجاح.`);
+    await loadSuperAdminConsoleData();
+  } catch (err) {
+    alert(`❌ خطأ: ${err.message}`);
+  }
+};
+
+window.openEditOrgModal = (orgId) => {
+  const org = saasOrgsCache.find(o => o.id === orgId);
+  if (!org) return;
+
+  const modal = document.getElementById("editOrgSubscriptionModal");
+  if (!modal) return;
+
+  document.getElementById("editOrgIdHidden").value = org.id;
+  document.getElementById("editOrgModalName").textContent = org.name;
+  document.getElementById("editOrgNameInput").value = org.name || "";
+  document.getElementById("editOrgIndustrySelect").value = org.industry_type || "retail";
+  document.getElementById("editOrgTaxInput").value = org.tax_number || "";
+  document.getElementById("editOrgPlanSelect").value = org.subscription_plan || "PRO";
+  document.getElementById("editOrgStatusSelect").value = org.subscription_status || "ACTIVE";
+  document.getElementById("editOrgExpiryInput").value = org.subscription_expires_at || "";
+  document.getElementById("editOrgPriceInput").value = org.subscription_price_jod || 0;
+  document.getElementById("editOrgEmailInput").value = org.contact_email || "";
+  document.getElementById("editOrgPhoneInput").value = org.contact_phone || "";
+  document.getElementById("editOrgBotTokenInput").value = org.telegram_bot_token || "";
+
+  const alertBox = document.getElementById("editOrgAlert");
+  if (alertBox) {
+    alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+    alertBox.textContent = "";
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+};
+
+window.openTenantPasswordModal = (orgId) => {
+  const org = saasOrgsCache.find(o => o.id === orgId);
+  if (!org) return;
+
+  selectedOrgForPasswordModal = org;
+  const modal = document.getElementById("tenantPasswordModal");
+  if (!modal) return;
+
+  document.getElementById("tenantPassModalOrgName").textContent = org.name;
+  document.getElementById("tenantPassModalUsername").textContent = org.admin_user ? org.admin_user.username : "مدير المنشأة";
+
+  const directPass = document.getElementById("directResetNewPass");
+  if (directPass) directPass.value = "";
+  const directAlert = document.getElementById("directResetAlert");
+  if (directAlert) {
+    directAlert.className = "hidden p-3 rounded-xl text-xs font-semibold";
+    directAlert.textContent = "";
+  }
+  const linkAlert = document.getElementById("resetLinkAlert");
+  if (linkAlert) {
+    linkAlert.className = "hidden p-2.5 rounded-xl text-xs font-semibold";
+    linkAlert.textContent = "";
+  }
+  const linkContainer = document.getElementById("generatedLinkContainer");
+  if (linkContainer) linkContainer.classList.add("hidden");
+
+  // Default to Tab 1
+  const tabDirectBtn = document.getElementById("tabDirectResetBtn");
+  const tabLinkBtn = document.getElementById("tabResetLinkBtn");
+  const tabDirectContent = document.getElementById("tabDirectResetContent");
+  const tabLinkContent = document.getElementById("tabResetLinkContent");
+  if (tabDirectBtn && tabLinkBtn && tabDirectContent && tabLinkContent) {
+    tabDirectBtn.className = "px-3.5 py-2 text-indigo-400 border-b-2 border-indigo-500 transition flex items-center gap-1.5 cursor-pointer";
+    tabLinkBtn.className = "px-3.5 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+    tabDirectContent.classList.remove("hidden");
+    tabLinkContent.classList.add("hidden");
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
+};
+
+function setupSuperAdminConsole() {
+  // 1. Search and Filters
+  const searchInput = document.getElementById("saasSearchInput");
+  const statusFilter = document.getElementById("saasStatusFilter");
+  const planFilter = document.getElementById("saasPlanFilter");
+
+  if (searchInput) searchInput.addEventListener("input", filterAndRenderSaasTable);
+  if (statusFilter) statusFilter.addEventListener("change", filterAndRenderSaasTable);
+  if (planFilter) planFilter.addEventListener("change", filterAndRenderSaasTable);
+
+  // 2. Exit Inspection Buttons
+  const exitBtn1 = document.getElementById("exitTenantInspectionBtn");
+  const exitBtn2 = document.getElementById("headerExitInspectionBtn");
+  if (exitBtn1) exitBtn1.addEventListener("click", window.exitTenantView);
+  if (exitBtn2) exitBtn2.addEventListener("click", window.exitTenantView);
+
+  // 3. Refresh Console Button
+  const refreshAdminBtn = document.getElementById("headerRefreshAdminBtn");
+  if (refreshAdminBtn) refreshAdminBtn.addEventListener("click", loadSuperAdminConsoleData);
+
+  // 4. Users Accordion Toggle
+  const toggleUsersBtn = document.getElementById("togglePlatformUsersBtn");
+  const usersSection = document.getElementById("platformUsersSection");
+  const toggleIcon = document.getElementById("togglePlatformUsersIcon");
+  if (toggleUsersBtn && usersSection) {
+    toggleUsersBtn.addEventListener("click", () => {
+      const isHidden = usersSection.classList.contains("hidden");
+      if (isHidden) {
+        usersSection.classList.remove("hidden");
+        if (toggleIcon) toggleIcon.style.transform = "rotate(180deg)";
+        fetchPlatformUsers();
+      } else {
+        usersSection.classList.add("hidden");
+        if (toggleIcon) toggleIcon.style.transform = "rotate(0deg)";
+      }
+    });
+  }
+
+  // 5. Create Org Modal
+  const createModal = document.getElementById("createOrgModal");
+  const openCreateBtns = [
+    document.getElementById("headerAddOrgBtn"),
+    document.getElementById("adminConsoleAddOrgBtn"),
+    document.getElementById("saasAddNewOrgBtn")
+  ];
+  const closeCreateBtn = document.getElementById("closeCreateOrgModalBtn");
+  const cancelCreateBtn = document.getElementById("cancelCreateOrgModalBtn");
+  const createForm = document.getElementById("createOrgModalForm");
+
+  openCreateBtns.forEach(btn => {
+    if (btn && createModal) {
+      btn.addEventListener("click", () => {
+        createForm?.reset();
+        const alertBox = document.getElementById("createOrgAlert");
+        if (alertBox) {
+          alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "";
+        }
+        createModal.classList.remove("hidden");
+        createModal.classList.add("flex");
+        if (window.lucide) lucide.createIcons();
+      });
+    }
+  });
+
+  const closeCreateModal = () => {
+    if (createModal) {
+      createModal.classList.add("hidden");
+      createModal.classList.remove("flex");
+    }
+  };
+  if (closeCreateBtn) closeCreateBtn.addEventListener("click", closeCreateModal);
+  if (cancelCreateBtn) cancelCreateBtn.addEventListener("click", closeCreateModal);
+
+  if (createForm) {
+    createForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById("submitCreateOrgModalBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("createOrgAlert");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري إنشاء المنشأة والاشتراك...</span>`;
+      }
+      try {
+        const payload = {
+          name: document.getElementById("modalNewOrgName").value.trim(),
+          industry_type: document.getElementById("modalNewOrgIndustry").value,
+          tax_number: document.getElementById("modalNewOrgTax").value.trim() || null,
+          branches: document.getElementById("modalNewOrgBranches").value.split(",").map(s => s.trim()).filter(Boolean),
+          subscription_plan: document.getElementById("modalNewOrgPlan").value,
+          subscription_duration_months: parseInt(document.getElementById("modalNewOrgDuration").value, 10) || 12,
+          subscription_price_jod: parseFloat(document.getElementById("modalNewOrgPrice").value) || 0,
+          contact_email: document.getElementById("modalNewOrgEmail").value.trim() || null,
+          contact_phone: document.getElementById("modalNewOrgPhone").value.trim() || null,
+          telegram_bot_token: document.getElementById("modalNewOrgBotToken").value.trim() || null,
+          admin_username: document.getElementById("modalNewOrgAdminUser").value.trim(),
+          admin_full_name: document.getElementById("modalNewOrgAdminName").value.trim(),
+          admin_password: document.getElementById("modalNewOrgAdminPass").value.trim()
+        };
+
+        const res = await authFetch("/api/v1/admin/organizations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تسجيل المنشأة");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+        }
+
+        setTimeout(() => {
+          closeCreateModal();
+          loadSuperAdminConsoleData();
+        }, 1000);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 6. Admin Profile Modal (Super Admin Settings)
+  const profileModal = document.getElementById("adminProfileModal");
+  const openProfileBtns = [
+    document.getElementById("headerAdminProfileBtn"),
+    document.getElementById("adminConsoleProfileBtn")
+  ];
+  const closeProfileBtn = document.getElementById("closeAdminProfileModalBtn");
+  const cancelProfileBtn = document.getElementById("cancelAdminProfileBtn");
+  const profileForm = document.getElementById("adminProfileForm");
+
+  openProfileBtns.forEach(btn => {
+    if (btn && profileModal) {
+      btn.addEventListener("click", () => {
+        if (currentUser) {
+          document.getElementById("adminProfileFullName").value = currentUser.full_name || "";
+          document.getElementById("adminProfileEmail").value = currentUser.email || "";
+        }
+        document.getElementById("adminProfileCurrentPass").value = "";
+        document.getElementById("adminProfileNewPass").value = "";
+        const alertBox = document.getElementById("adminProfileAlert");
+        if (alertBox) {
+          alertBox.className = "hidden p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "";
+        }
+        profileModal.classList.remove("hidden");
+        profileModal.classList.add("flex");
+        if (window.lucide) lucide.createIcons();
+      });
+    }
+  });
+
+  const closeProfileModal = () => {
+    if (profileModal) {
+      profileModal.classList.add("hidden");
+      profileModal.classList.remove("flex");
+    }
+  };
+  if (closeProfileBtn) closeProfileBtn.addEventListener("click", closeProfileModal);
+  if (cancelProfileBtn) cancelProfileBtn.addEventListener("click", closeProfileModal);
+
+  if (profileForm) {
+    profileForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById("submitAdminProfileBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("adminProfileAlert");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري حفظ وتحديث الحساب...</span>`;
+      }
+      try {
+        const payload = {
+          full_name: document.getElementById("adminProfileFullName").value.trim(),
+          email: document.getElementById("adminProfileEmail").value.trim()
+        };
+
+        const currentPass = document.getElementById("adminProfileCurrentPass").value;
+        const newPass = document.getElementById("adminProfileNewPass").value;
+        if (newPass) {
+          if (!currentPass) {
+            throw new Error("يرجى إدخال كلمة المرور الحالية لتأكيد التغيير.");
+          }
+          payload.current_password = currentPass;
+          payload.new_password = newPass;
+        }
+
+        const res = await authFetch("/api/v1/admin/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تحديث ملف الحساب");
+        }
+
+        const data = await res.json();
+        currentUser = { ...currentUser, ...data.user };
+        updateHeaderUserUI();
+
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+        }
+
+        setTimeout(() => {
+          closeProfileModal();
+        }, 1100);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 7. Edit Organization Subscription Modal
+  const editOrgModal = document.getElementById("editOrgSubscriptionModal");
+  const closeEditOrgBtn = document.getElementById("closeEditOrgModalBtn");
+  const cancelEditOrgBtn = document.getElementById("cancelEditOrgBtn");
+  const editOrgForm = document.getElementById("editOrgSubscriptionForm");
+
+  const closeEditModal = () => {
+    if (editOrgModal) {
+      editOrgModal.classList.add("hidden");
+      editOrgModal.classList.remove("flex");
+    }
+  };
+  if (closeEditOrgBtn) closeEditOrgBtn.addEventListener("click", closeEditModal);
+  if (cancelEditOrgBtn) cancelEditOrgBtn.addEventListener("click", closeEditModal);
+
+  if (editOrgForm) {
+    editOrgForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const orgId = document.getElementById("editOrgIdHidden").value;
+      const submitBtn = document.getElementById("submitEditOrgBtn");
+      const originalHtml = submitBtn ? submitBtn.innerHTML : "";
+      const alertBox = document.getElementById("editOrgAlert");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>جاري حفظ التعديلات...</span>`;
+      }
+      try {
+        const payload = {
+          name: document.getElementById("editOrgNameInput").value.trim(),
+          industry_type: document.getElementById("editOrgIndustrySelect").value,
+          tax_number: document.getElementById("editOrgTaxInput").value.trim() || null,
+          subscription_plan: document.getElementById("editOrgPlanSelect").value,
+          subscription_status: document.getElementById("editOrgStatusSelect").value,
+          subscription_expires_at: document.getElementById("editOrgExpiryInput").value || null,
+          subscription_price_jod: parseFloat(document.getElementById("editOrgPriceInput").value) || 0,
+          contact_email: document.getElementById("editOrgEmailInput").value.trim() || null,
+          contact_phone: document.getElementById("editOrgPhoneInput").value.trim() || null,
+          telegram_bot_token: document.getElementById("editOrgBotTokenInput").value.trim() || null
+        };
+
+        const res = await authFetch(`/api/v1/admin/organizations/${orgId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تعديل المنشأة");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+        }
+
+        setTimeout(() => {
+          closeEditModal();
+          loadSuperAdminConsoleData();
+        }, 900);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalHtml;
+        }
+      }
+    });
+  }
+
+  // 8. Tenant Password Modal (Direct & Link Tabs)
+  const passModal = document.getElementById("tenantPasswordModal");
+  const closePassBtns = [
+    document.getElementById("closeTenantPasswordModalBtn"),
+    document.getElementById("closeTenantPassModalDirectBtn"),
+    document.getElementById("closeTenantPassModalLinkBtn")
+  ];
+  closePassBtns.forEach(b => {
+    if (b && passModal) {
+      b.addEventListener("click", () => {
+        passModal.classList.add("hidden");
+        passModal.classList.remove("flex");
+      });
+    }
+  });
+
+  const tabDirectBtn = document.getElementById("tabDirectResetBtn");
+  const tabLinkBtn = document.getElementById("tabResetLinkBtn");
+  const tabDirectContent = document.getElementById("tabDirectResetContent");
+  const tabLinkContent = document.getElementById("tabResetLinkContent");
+
+  if (tabDirectBtn && tabLinkBtn && tabDirectContent && tabLinkContent) {
+    tabDirectBtn.addEventListener("click", () => {
+      tabDirectBtn.className = "px-3.5 py-2 text-indigo-400 border-b-2 border-indigo-500 transition flex items-center gap-1.5 cursor-pointer";
+      tabLinkBtn.className = "px-3.5 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+      tabDirectContent.classList.remove("hidden");
+      tabLinkContent.classList.add("hidden");
+    });
+
+    tabLinkBtn.addEventListener("click", () => {
+      tabLinkBtn.className = "px-3.5 py-2 text-indigo-400 border-b-2 border-indigo-500 transition flex items-center gap-1.5 cursor-pointer";
+      tabDirectBtn.className = "px-3.5 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+      tabLinkContent.classList.remove("hidden");
+      tabDirectContent.classList.add("hidden");
+    });
+  }
+
+  // Direct Password Reset Submit
+  const submitDirectBtn = document.getElementById("submitDirectResetBtn");
+  if (submitDirectBtn) {
+    submitDirectBtn.addEventListener("click", async () => {
+      if (!selectedOrgForPasswordModal || !selectedOrgForPasswordModal.admin_user) {
+        alert("لم يتم العثور على حساب المدير لهذه المنشأة.");
+        return;
+      }
+      const newPass = document.getElementById("directResetNewPass")?.value;
+      const alertBox = document.getElementById("directResetAlert");
+      if (!newPass || newPass.length < 6) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "يجب ألا تقل كلمة المرور عن 6 خانات.";
+          alertBox.classList.remove("hidden");
+        }
+        return;
+      }
+
+      submitDirectBtn.disabled = true;
+      try {
+        const userId = selectedOrgForPasswordModal.admin_user.id;
+        const res = await authFetch(`/api/v1/admin/users/${userId}/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_password: newPass })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تعيين كلمة المرور");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        submitDirectBtn.disabled = false;
+      }
+    });
+  }
+
+  // Generate 24h Reset Link Submit
+  const generateLinkBtn = document.getElementById("generateResetLinkBtn");
+  if (generateLinkBtn) {
+    generateLinkBtn.addEventListener("click", async () => {
+      if (!selectedOrgForPasswordModal || !selectedOrgForPasswordModal.admin_user) {
+        alert("لم يتم العثور على حساب المدير لهذه المنشأة.");
+        return;
+      }
+
+      generateLinkBtn.disabled = true;
+      generateLinkBtn.innerHTML = `<span>جاري توليد الرابط الأمني...</span>`;
+      try {
+        const userId = selectedOrgForPasswordModal.admin_user.id;
+        const res = await authFetch(`/api/v1/admin/users/${userId}/generate-reset-link`, {
+          method: "POST"
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل توليد رابط إعادة التعيين");
+        }
+
+        const data = await res.json();
+        const fullUrl = `${window.location.origin}${data.reset_url}`;
+
+        const linkInput = document.getElementById("generatedResetLinkInput");
+        if (linkInput) linkInput.value = fullUrl;
+
+        const linkContainer = document.getElementById("generatedLinkContainer");
+        if (linkContainer) linkContainer.classList.remove("hidden");
+
+        const linkAlert = document.getElementById("resetLinkAlert");
+        if (linkAlert) {
+          linkAlert.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-2.5 rounded-xl text-xs font-semibold";
+          linkAlert.textContent = `✅ تم توليد الرابط بنجاح وهو صالح لمدة 24 ساعة لمرة واحدة.`;
+          linkAlert.classList.remove("hidden");
+        }
+
+        // Wire Copy Button
+        const copyBtn = document.getElementById("copyResetLinkBtn");
+        if (copyBtn) {
+          copyBtn.onclick = () => {
+            navigator.clipboard.writeText(fullUrl);
+            copyBtn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i><span>تم النسخ!</span>`;
+            if (window.lucide) lucide.createIcons();
+            setTimeout(() => {
+              copyBtn.innerHTML = `<i data-lucide="copy" class="w-3.5 h-3.5"></i><span>نسخ</span>`;
+              if (window.lucide) lucide.createIcons();
+            }, 2000);
+          };
+        }
+
+        // Wire WhatsApp Button
+        const waBtn = document.getElementById("sendResetLinkWhatsAppBtn");
+        if (waBtn) {
+          waBtn.onclick = () => {
+            const orgName = selectedOrgForPasswordModal.name || "المنشأة";
+            const msg = `مرحباً بك، هذا رابط إعادة تعيين كلمة المرور لحساب منشأة "${orgName}" في المنصة السحابية (الرابط صالح لمدة 24 ساعة لمرة واحدة فقط):\n${fullUrl}`;
+            const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+            window.open(waUrl, "_blank");
+          };
+        }
+
+        // Wire Email Simulation Button
+        const emailBtn = document.getElementById("simulateEmailResetLinkBtn");
+        if (emailBtn) {
+          emailBtn.onclick = () => {
+            const email = selectedOrgForPasswordModal.contact_email || selectedOrgForPasswordModal.admin_user?.email || "البريد الإلكتروني للعميل";
+            if (linkAlert) {
+              linkAlert.className = "bg-sky-950/70 border border-sky-500/40 text-sky-300 p-2.5 rounded-xl text-xs font-semibold";
+              linkAlert.textContent = `📧 تم إرسال رسالة بريد إلكتروني تحتوي على الرابط الأمني وتعليمات إعادة التعيين إلى: ${email}`;
+              linkAlert.classList.remove("hidden");
+            }
+          };
+        }
+      } catch (err) {
+        alert(`❌ خطأ: ${err.message}`);
+      } finally {
+        generateLinkBtn.disabled = false;
+        generateLinkBtn.innerHTML = `<i data-lucide="sparkles" class="w-4 h-4"></i><span>توليد رابط إعادة التعيين الآمن الآن</span>`;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+
+  // 9. Public Reset Password Modal Form Submit
+  const publicResetForm = document.getElementById("publicResetPasswordForm");
+  if (publicResetForm) {
+    publicResetForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const token = document.getElementById("publicResetTokenHidden")?.value;
+      const pass1 = document.getElementById("publicResetNewPass")?.value;
+      const pass2 = document.getElementById("publicResetConfirmPass")?.value;
+      const alertBox = document.getElementById("publicResetAlert");
+      const submitBtn = document.getElementById("submitPublicResetBtn");
+
+      if (pass1 !== pass2) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "كلمتا المرور غير متطابقتين.";
+          alertBox.classList.remove("hidden");
+        }
+        return;
+      }
+
+      if (!pass1 || pass1.length < 6) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = "يجب ألا تقل كلمة المرور عن 6 خانات.";
+          alertBox.classList.remove("hidden");
+        }
+        return;
+      }
+
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        const res = await fetch("/api/v1/auth/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, new_password: pass1 })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "فشل تعيين كلمة المرور");
+        }
+
+        const data = await res.json();
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `✅ ${data.message}`;
+          alertBox.classList.remove("hidden");
+        }
+
+        setTimeout(() => {
+          window.location.href = "/index.html";
+        }, 1500);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold";
+          alertBox.textContent = `❌ ${err.message}`;
+          alertBox.classList.remove("hidden");
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+}
+
