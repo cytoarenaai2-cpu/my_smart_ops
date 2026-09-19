@@ -2,6 +2,7 @@ from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.core.database import get_db
 from app.models.schema import User, Organization, UserRoleEnum
@@ -39,36 +40,49 @@ async def login(request: Request, db: Session = Depends(get_db)):
     يدعم كلاً من JSON payload و x-www-form-urlencoded و FormData.
     """
     content_type = request.headers.get("content-type", "")
-    username = ""
+    identifier = ""
     password = ""
 
     if "application/json" in content_type:
         try:
             body = await request.json()
-            username = str(body.get("username", "")).strip()
+            identifier = str(body.get("username") or body.get("email") or "").strip()
             password = str(body.get("password", ""))
         except Exception:
             pass
     else:
         try:
             form = await request.form()
-            username = str(form.get("username", "")).strip()
+            identifier = str(form.get("username") or form.get("email") or "").strip()
             password = str(form.get("password", ""))
         except Exception:
             pass
 
-    if not username or not password:
+    if not identifier or not password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="يرجى إدخال اسم المستخدم وكلمة المرور."
+            detail="يرجى إدخال البريد الإلكتروني أو اسم المستخدم وكلمة المرور."
         )
 
-    user = db.query(User).filter(User.username.ilike(username)).first()
+    clean_id = identifier.lower()
+    user = db.query(User).filter(
+        (func.lower(User.username) == clean_id) | (func.lower(User.email) == clean_id)
+    ).first()
+
+    if not user:
+        org = db.query(Organization).filter(func.lower(Organization.contact_email) == clean_id).first()
+        if org:
+            user = db.query(User).filter(
+                User.organization_id == org.id,
+                User.role == UserRoleEnum.ORG_ADMIN
+            ).first()
+            if not user:
+                user = db.query(User).filter(User.organization_id == org.id).first()
 
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="اسم المستخدم أو كلمة المرور غير صحيحة.",
+            detail="البريد الإلكتروني / اسم المستخدم أو كلمة المرور غير صحيحة.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -238,4 +252,68 @@ def reset_password_with_token(
         "message": f"تم تعيين كلمة المرور بنجاح للمستخدم '{user.username}'! يمكنك الآن تسجيل الدخول.",
         "username": user.username
     }
+
+
+class ForgotPasswordRequest(BaseModel):
+    identifier: str
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    req: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    استعادة الحساب أو تعيين كلمة مرور جديدة للمستخدم أو المنشأة في حال نسيان البيانات.
+    يقبل البريد الإلكتروني أو اسم المستخدم.
+    """
+    import secrets
+    from datetime import datetime, timezone, timedelta
+
+    clean_id = req.identifier.strip().lower()
+    if not clean_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="يرجى إدخال البريد الإلكتروني أو اسم المستخدم المسجل."
+        )
+
+    # 1. البحث عن المستخدم بالاسم أو البريد
+    user = db.query(User).filter(
+        (func.lower(User.username) == clean_id) | (func.lower(User.email) == clean_id)
+    ).first()
+
+    # 2. إذا لم يوجد، نبحث بواسطة البريد أو الاسم المسجل للمنشأة
+    if not user:
+        org = db.query(Organization).filter(
+            (func.lower(Organization.contact_email) == clean_id) |
+            (func.lower(Organization.name) == clean_id)
+        ).first()
+        if org:
+            user = db.query(User).filter(
+                User.organization_id == org.id,
+                User.role == UserRoleEnum.ORG_ADMIN
+            ).first()
+            if not user:
+                user = db.query(User).filter(User.organization_id == org.id).first()
+
+    if not user:
+        return {
+            "success": False,
+            "message": "لم نتمكن من العثور على حساب مسجل بهذا البريد أو اسم المستخدم. يرجى التحقق من المدخلات أو التواصل مع إدارة المنصة."
+        }
+
+    # توليد رمز أمان سري لإعادة التعيين صالح لـ 24 ساعة
+    reset_token = secrets.token_urlsafe(32)
+    user.reset_token = reset_token
+    user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"تم التعرف على الحساب بنجاح! اسم المستخدم الخاص بك هو: '{user.username}'. يمكنك تعيين كلمة مرور جديدة الآن.",
+        "username": user.username,
+        "email": user.email,
+        "reset_token": reset_token
+    }
+
 

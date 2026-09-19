@@ -82,7 +82,223 @@ window.fillDemoLogin = (username, password) => {
   if (btn) btn.click();
 };
 
+let currentForgotResetToken = null;
+
+function openForgotPasswordModal() {
+  closeLoginModal();
+  const modal = document.getElementById("forgotPasswordModal");
+  if (modal) {
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    const form1 = document.getElementById("forgotPasswordForm");
+    const form2 = document.getElementById("forgotResetPassForm");
+    const alert1 = document.getElementById("forgotAlert");
+    const alert2 = document.getElementById("forgotResetAlert");
+    const input = document.getElementById("forgotIdentifierInput");
+    if (form1) form1.reset();
+    if (form2) {
+      form2.reset();
+      form2.classList.add("hidden");
+    }
+    if (alert1) {
+      alert1.className = "hidden p-3 rounded-xl text-xs text-right";
+      alert1.textContent = "";
+    }
+    if (alert2) {
+      alert2.className = "hidden p-3 rounded-xl text-xs text-right";
+      alert2.textContent = "";
+    }
+    if (input) {
+      const loginU = document.getElementById("loginUsernameInput");
+      if (loginU && loginU.value) {
+        input.value = loginU.value.trim();
+      }
+      setTimeout(() => input.focus(), 50);
+    }
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+function closeForgotPasswordModal() {
+  const modal = document.getElementById("forgotPasswordModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+}
+
+function setupForgotPasswordEvents() {
+  const openBtn = document.getElementById("openForgotPassBtn");
+  if (openBtn) {
+    openBtn.addEventListener("click", openForgotPasswordModal);
+  }
+
+  const closeBtn = document.getElementById("closeForgotPassModalBtn");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      closeForgotPasswordModal();
+      openLoginModal();
+    });
+  }
+
+  const backBtn = document.getElementById("backToLoginBtn");
+  if (backBtn) {
+    backBtn.addEventListener("click", () => {
+      closeForgotPasswordModal();
+      openLoginModal();
+    });
+  }
+
+  const forgotModal = document.getElementById("forgotPasswordModal");
+  if (forgotModal) {
+    forgotModal.addEventListener("click", (e) => {
+      if (e.target === forgotModal) {
+        closeForgotPasswordModal();
+        openLoginModal();
+      }
+    });
+  }
+
+  const forgotForm = document.getElementById("forgotPasswordForm");
+  if (forgotForm) {
+    forgotForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("forgotIdentifierInput");
+      const alertBox = document.getElementById("forgotAlert");
+      const submitBtn = document.getElementById("submitForgotBtn");
+      const resetForm = document.getElementById("forgotResetPassForm");
+      const foundUserEl = document.getElementById("forgotFoundUsername");
+
+      const identifier = input ? input.value.trim() : "";
+      if (!identifier) return;
+
+      const origBtn = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span>جاري التحقق من الحساب...</span>`;
+
+      try {
+        const res = await fetch("/api/v1/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "فشل التحقق من الحساب");
+        }
+
+        if (data.success) {
+          if (alertBox) {
+            alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold block text-right";
+            alertBox.textContent = `✅ ${data.message}`;
+          }
+          currentForgotResetToken = data.reset_token;
+          if (foundUserEl) {
+            foundUserEl.textContent = data.username;
+          }
+          if (resetForm) {
+            resetForm.classList.remove("hidden");
+            const newPassInput = document.getElementById("forgotNewPassInput");
+            if (newPassInput) newPassInput.focus();
+          }
+        } else {
+          if (alertBox) {
+            alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
+            alertBox.textContent = `⚠️ ${data.message}`;
+          }
+          if (resetForm) resetForm.classList.add("hidden");
+        }
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
+          alertBox.textContent = `❌ ${err.message}`;
+        }
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origBtn;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+
+  const resetPassForm = document.getElementById("forgotResetPassForm");
+  if (resetPassForm) {
+    resetPassForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const p1 = document.getElementById("forgotNewPassInput").value;
+      const p2 = document.getElementById("forgotConfirmPassInput").value;
+      const alertBox = document.getElementById("forgotResetAlert");
+      const submitBtn = document.getElementById("submitForgotResetBtn");
+
+      if (p1 !== p2) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
+          alertBox.textContent = "❌ كلمتا المرور غير متطابقتين!";
+        }
+        return;
+      }
+
+      if (p1.length < 6) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
+          alertBox.textContent = "❌ يجب أن تتكون كلمة المرور من 6 خانات على الأقل.";
+        }
+        return;
+      }
+
+      const origBtn = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span>جاري حفظ كلمة المرور...</span>`;
+
+      try {
+        const res = await fetch("/api/v1/auth/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: currentForgotResetToken,
+            new_password: p1
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "فشل تعيين كلمة المرور");
+        }
+
+        if (alertBox) {
+          alertBox.className = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 p-3 rounded-xl text-xs font-semibold block text-right";
+          alertBox.textContent = `✅ ${data.message}`;
+        }
+
+        setTimeout(() => {
+          closeForgotPasswordModal();
+          openLoginModal();
+          const uInput = document.getElementById("loginUsernameInput");
+          const pInput = document.getElementById("loginPasswordInput");
+          if (uInput && data.username) uInput.value = data.username;
+          if (pInput) {
+            pInput.value = p1;
+            pInput.focus();
+          }
+        }, 1500);
+      } catch (err) {
+        if (alertBox) {
+          alertBox.className = "bg-rose-950/70 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold block text-right";
+          alertBox.textContent = `❌ ${err.message}`;
+        }
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origBtn;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+}
+
 function setupAuthSystem() {
+  setupForgotPasswordEvents();
+
   const form = document.getElementById("loginForm");
   if (form) {
     form.addEventListener("submit", handleLoginSubmit);
@@ -163,7 +379,12 @@ async function handleLoginSubmit(e) {
     await initAuthenticatedUser();
   } catch (err) {
     if (errAlert) {
-      errAlert.textContent = err.message;
+      errAlert.innerHTML = `
+        <div class="space-y-1">
+          <div>${err.message}</div>
+          <div class="text-[11px] text-slate-300">نسيت بيانات الدخول؟ اضغط على <strong>"نسيت كلمة المرور أو الإيميل؟"</strong> بالأسفل لاستعادة حسابك.</div>
+        </div>
+      `;
       errAlert.classList.remove("hidden");
     }
   } finally {

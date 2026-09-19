@@ -1388,40 +1388,23 @@
         <p class="text-xs text-slate-400">إدارة العمليات والفوترة والربط الضريبي متعدد الشركات (SaaS)</p>
       </div>
 
-      <!-- Quick Demo Login Switcher Buttons -->
-      <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3 space-y-2">
-        <span class="text-[11px] font-semibold text-slate-300 block text-right">⚡ تسجيل دخول سريع وتجربة الأدوار (Demo Accounts):</span>
-        <div class="grid grid-cols-2 gap-1.5 text-[11px]">
-          <button type="button" onclick="window.fillDemoLogin('superadmin', 'SuperAdmin@2026')" class="text-right p-1.5 rounded-lg bg-purple-950/50 hover:bg-purple-900/60 border border-purple-500/30 text-purple-200 transition cursor-pointer">
-            👑 <strong>مالك المنصة</strong> (Super)
-          </button>
-          <button type="button" onclick="window.fillDemoLogin('rawsheh_admin', 'Admin@123')" class="text-right p-1.5 rounded-lg bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-200 transition cursor-pointer">
-            🏢 <strong>مدير الروشة</strong> (Admin)
-          </button>
-          <button type="button" onclick="window.fillDemoLogin('rawsheh_accountant', 'Accountant@123')" class="text-right p-1.5 rounded-lg bg-sky-950/50 hover:bg-sky-900/60 border border-sky-500/30 text-sky-200 transition cursor-pointer">
-            📊 <strong>محاسب قانوني</strong> (Auditor)
-          </button>
-          <button type="button" onclick="window.fillDemoLogin('rawsheh_cashier', 'Cashier@123')" class="text-right p-1.5 rounded-lg bg-amber-950/50 hover:bg-amber-900/60 border border-amber-500/30 text-amber-200 transition cursor-pointer">
-            🛒 <strong>كاشير فروع</strong> (Cashier)
-          </button>
-          <button type="button" onclick="window.fillDemoLogin('baraka_admin', 'Admin@123')" class="col-span-2 text-right p-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-200 transition cursor-pointer">
-            🏪 <strong>سوبرماركت البركة</strong> (منشأة ثانية معزولة)
-          </button>
-        </div>
-      </div>
-
       <!-- Login Form -->
       <form id="loginForm" class="space-y-4 text-xs">
         <div>
-          <label class="block text-slate-200 font-semibold mb-1.5 text-right">اسم المستخدم:</label>
+          <label class="block text-slate-200 font-semibold mb-1.5 text-right">البريد الإلكتروني أو اسم المستخدم:</label>
           <div class="relative">
-            <input type="text" id="loginUsernameInput" required autocomplete="username" dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="e.g. rawsheh_admin" />
-            <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none"></i>
+            <input type="text" id="loginUsernameInput" required autocomplete="username email" dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="name@company.com أو اسم المستخدم" />
+            <i data-lucide="mail" class="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none"></i>
           </div>
         </div>
 
         <div>
-          <label class="block text-slate-200 font-semibold mb-1.5 text-right">كلمة المرور:</label>
+          <div class="flex items-center justify-between mb-1.5">
+            <button type="button" id="openForgotPassBtn" class="text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer transition">
+              نسيت كلمة المرور أو الإيميل؟
+            </button>
+            <label class="block text-slate-200 font-semibold text-right">كلمة المرور:</label>
+          </div>
           <div class="relative">
             <input type="password" id="loginPasswordInput" required autocomplete="current-password" dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="••••••••" />
             <button type="button" id="toggleLoginPasswordBtn" class="absolute left-3 top-3 text-slate-400 hover:text-white cursor-pointer">
@@ -1441,6 +1424,98 @@
       <div class="text-[11px] text-slate-500 text-center pt-2 border-t border-slate-800">
         محمي بتشفير الرموز الأمنية JWT &amp; PBKDF2/Bcrypt • عزل تام لسجلات المنشآت
       </div>
+    </div>
+  </div>
+
+  <!-- Forgot Password / Account Recovery Modal -->
+  <div id="forgotPasswordModal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="glass-card bg-slate-900 border border-indigo-500/40 w-full max-w-md rounded-2xl shadow-2xl p-6 sm:p-8 space-y-5 my-auto">
+      
+      <!-- Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="key-round" class="w-5 h-5"></i>
+          </div>
+          <div class="text-right">
+            <h3 class="text-base font-bold text-white">استعادة الحساب / كلمة المرور</h3>
+            <p class="text-[11px] text-slate-400">إعادة تعيين كلمة المرور أو استرجاع بيانات الدخول</p>
+          </div>
+        </div>
+        <button type="button" id="closeForgotPassModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Step 1: Identifier Input Form -->
+      <form id="forgotPasswordForm" class="space-y-4 text-xs">
+        <p class="text-slate-300 text-xs leading-relaxed text-right">
+          أدخل البريد الإلكتروني المسجل لمنشأتك أو اسم المستخدم، وسنتحقق من الحساب ونمكنك من تعيين كلمة مرور جديدة فوراً.
+        </p>
+
+        <div>
+          <label class="block text-slate-200 font-semibold mb-1.5 text-right">البريد الإلكتروني أو اسم المستخدم:</label>
+          <div class="relative">
+            <input type="text" id="forgotIdentifierInput" required dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="e.g. name@company.com" />
+            <i data-lucide="mail" class="w-4 h-4 text-slate-500 absolute left-3 top-3 pointer-events-none"></i>
+          </div>
+        </div>
+
+        <div id="forgotAlert" class="hidden p-3 rounded-xl text-xs text-right"></div>
+
+        <button type="submit" id="submitForgotBtn" class="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-600/20 active:scale-95 transition cursor-pointer">
+          <i data-lucide="search" class="w-4 h-4"></i>
+          <span>التحقق واستعادة الحساب</span>
+        </button>
+      </form>
+
+      <!-- Step 2: Set New Password Form (Revealed upon token generation) -->
+      <form id="forgotResetPassForm" class="space-y-4 text-xs hidden border-t border-slate-800 pt-4">
+        <div class="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-3 text-right space-y-1">
+          <span class="text-[11px] text-indigo-300 font-semibold block">تم التحقق من الحساب بنجاح:</span>
+          <div class="text-xs text-white font-mono flex items-center justify-end gap-2">
+            <span id="forgotFoundUsername" class="text-emerald-400 font-bold"></span>
+            <span class="text-slate-400">:اسم المستخدم المرتبط</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-200 font-semibold mb-1.5 text-right">كلمة المرور الجديدة:</label>
+          <div class="relative">
+            <input type="password" id="forgotNewPassInput" required minlength="6" dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="•••••••• (6 خانات على الأقل)" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-200 font-semibold mb-1.5 text-right">تأكيد كلمة المرور:</label>
+          <div class="relative">
+            <input type="password" id="forgotConfirmPassInput" required minlength="6" dir="ltr" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none text-sm" placeholder="••••••••" />
+          </div>
+        </div>
+
+        <div id="forgotResetAlert" class="hidden p-3 rounded-xl text-xs text-right"></div>
+
+        <button type="submit" id="submitForgotResetBtn" class="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 active:scale-95 transition cursor-pointer">
+          <i data-lucide="check-circle" class="w-4 h-4"></i>
+          <span>حفظ كلمة المرور الجديدة وتأكيد الدخول</span>
+        </button>
+      </form>
+
+      <!-- Support Footer Note -->
+      <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3 text-right space-y-1 text-[11px] text-slate-400">
+        <span class="font-semibold text-slate-300 block">💡 لم تتذكر بريدك أو اسم المستخدم؟</span>
+        <p>
+          يمكنك التواصل مباشرة مع مالك المنصة أو الدعم الفني لإعادة تعيين بيانات الدخول الخاصة بنشاطك التجاري.
+        </p>
+      </div>
+
+      <div class="flex justify-end">
+        <button type="button" id="backToLoginBtn" class="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer transition">
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+          <span>العودة لشاشة تسجيل الدخول</span>
+        </button>
+      </div>
+
     </div>
   </div>
 
@@ -2357,7 +2432,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20260919_v12"></script>
+  <script src="/static/app.js?v=20260919_v13"></script>
   <script>
     lucide.createIcons();
   </script>
