@@ -2572,14 +2572,52 @@ async function fetchPlatformUsers() {
 window.openUserPasswordModal = (userId, username, fullName) => {
   selectedOrgForPasswordModal = {
     id: "",
-    name: "مستخدم النظام",
+    name: fullName || "مستخدم النظام",
     admin_user: {
       id: userId,
       username: username,
       full_name: fullName
     }
   };
-  openTenantPasswordModalInternal();
+
+  const modal = document.getElementById("tenantPasswordModal");
+  if (!modal) return;
+
+  const orgNameEl = document.getElementById("tenantPassModalOrgName");
+  if (orgNameEl) orgNameEl.textContent = fullName || username;
+  const usernameEl = document.getElementById("tenantPassModalUsername");
+  if (usernameEl) usernameEl.textContent = username;
+
+  const directPass = document.getElementById("directResetNewPass");
+  if (directPass) directPass.value = "";
+  const directAlert = document.getElementById("directResetAlert");
+  if (directAlert) {
+    directAlert.className = "hidden p-3 rounded-xl text-xs font-semibold";
+    directAlert.textContent = "";
+  }
+  const linkAlert = document.getElementById("resetLinkAlert");
+  if (linkAlert) {
+    linkAlert.className = "hidden p-2.5 rounded-xl text-xs font-semibold";
+    linkAlert.textContent = "";
+  }
+  const linkContainer = document.getElementById("generatedLinkContainer");
+  if (linkContainer) linkContainer.classList.add("hidden");
+
+  // Default to Tab 1
+  const tabDirectBtn = document.getElementById("tabDirectResetBtn");
+  const tabLinkBtn = document.getElementById("tabResetLinkBtn");
+  const tabDirectContent = document.getElementById("tabDirectResetContent");
+  const tabLinkContent = document.getElementById("tabResetLinkContent");
+  if (tabDirectBtn && tabLinkBtn && tabDirectContent && tabLinkContent) {
+    tabDirectBtn.className = "px-3.5 py-2 text-indigo-400 border-b-2 border-indigo-500 transition flex items-center gap-1.5 cursor-pointer";
+    tabLinkBtn.className = "px-3.5 py-2 text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition flex items-center gap-1.5 cursor-pointer";
+    tabDirectContent.classList.remove("hidden");
+    tabLinkContent.classList.add("hidden");
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  if (window.lucide) lucide.createIcons();
 };
 
 window.confirmDeleteUser = async (userId, username) => {
