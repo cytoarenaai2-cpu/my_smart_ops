@@ -856,6 +856,12 @@ def direct_reset_user_password(
     if not user:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
 
+    if getattr(user, "is_primary_owner", False) and current_admin.id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="محظور أمنياً: لا يمكن للمالكين الآخرين إعادة تعيين كلمة مرور المالك الأساسي للمنصة."
+        )
+
     if len(req.new_password) < 6:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -882,6 +888,12 @@ def generate_user_reset_link(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
+
+    if getattr(user, "is_primary_owner", False) and current_admin.id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="محظور أمنياً: لا يمكن للمالكين الآخرين توليد رابط استعادة لحساب المالك الأساسي للمنصة."
+        )
 
     token = secrets.token_urlsafe(32)
     user.reset_token = token
@@ -924,6 +936,7 @@ def list_users(
             "email": u.email or "",
             "role": u.role,
             "is_active": u.is_active,
+            "is_primary_owner": bool(getattr(u, "is_primary_owner", False)),
             "organization_id": u.organization_id,
             "organization_name": u.organization.name if u.organization else "مالك المنصة (النظام العام)",
             "created_at": u.created_at.strftime("%Y-%m-%d %H:%M") if u.created_at else ""
@@ -962,7 +975,8 @@ def create_user(
         email=req.email.strip() if req.email else None,
         hashed_password=hash_password(req.password),
         role=req.role,
-        is_active=True
+        is_active=True,
+        is_primary_owner=False
     )
     db.add(user)
     db.commit()
@@ -977,7 +991,10 @@ def delete_or_toggle_user(
     db: Session = Depends(get_db)
 ):
     """
-    تعطيل أو حذف مستخدم من النظام.
+    تعطيل أو حذف مستخدم من النظام مع تطبيق ضوابط الصلاحية المطلقة (Super Power):
+    - المالك الأساسي لا يمكن حذفه بأي شكل.
+    - المالك الأساسي يستطيع حذف أي مستخدم بما في ذلك المالكين الآخرين للمنصة.
+    - المالكون الآخرون لا يمكنهم حذف المالك الأساسي أو حذف مالكي المنصة الآخرين.
     """
     if user_id == current_admin.id:
         raise HTTPException(
@@ -989,6 +1006,21 @@ def delete_or_toggle_user(
     if not user:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
 
+    # 1. حماية المالك الأساسي ذو الصلاحية المطلقة (Super Power) بشكل قطعي
+    if getattr(user, "is_primary_owner", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="محظور أمنياً: لا يمكن حذف أو تعطيل حساب المالك الأساسي للمنصة (صاحب الصلاحية المطلقة / Super Power)."
+        )
+
+    # 2. إذا كان الحساب المستهدف هو مالك منصة آخر (SUPER_ADMIN)
+    if user.role == UserRoleEnum.SUPER_ADMIN:
+        if not getattr(current_admin, "is_primary_owner", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="محظور أمنياً: فقط المالك الأساسي للمنصة (صاحب الصلاحية المطلقة / Super Power) يمتلك صلاحية حذف مالكي المنصة الآخرين."
+            )
+
     db.delete(user)
     db.commit()
-    return {"message": "تم حذف المستخدم بنجاح."}
+    return {"message": f"تم حذف المستخدم '{user.username}' بنجاح."}

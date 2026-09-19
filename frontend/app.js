@@ -449,6 +449,17 @@ function renderAppView() {
       if (headerPlatformSubtitle) {
         headerPlatformSubtitle.classList.remove("hidden");
         headerPlatformSubtitle.classList.add("inline-flex");
+        if (currentUser && (currentUser.is_primary_owner || currentUser.username === 'superadmin')) {
+          headerPlatformSubtitle.innerHTML = `
+            <i data-lucide="shield-alert" class="w-3 h-3 text-amber-400"></i>
+            <span>لوحة تحكم المالك الأساسي للمنصة (Super Power Root)</span>
+          `;
+        } else {
+          headerPlatformSubtitle.innerHTML = `
+            <i data-lucide="shield-check" class="w-3 h-3 text-purple-400"></i>
+            <span>لوحة تحكم مالك المنصة المركزية (SaaS Super Admin)</span>
+          `;
+        }
       }
       if (headerExitInspectionBtn) {
         headerExitInspectionBtn.classList.add("hidden");
@@ -457,8 +468,13 @@ function renderAppView() {
 
       if (headerMainTitle) headerMainTitle.textContent = "لوحة قيادة المنصة المركزية";
       if (headerTitleBadge) {
-        headerTitleBadge.textContent = "SaaS Super Admin";
-        headerTitleBadge.className = "text-[10px] sm:text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full whitespace-nowrap";
+        if (currentUser && (currentUser.is_primary_owner || currentUser.username === 'superadmin')) {
+          headerTitleBadge.textContent = "المالك الأساسي (Super Power)";
+          headerTitleBadge.className = "text-[10px] sm:text-xs bg-gradient-to-r from-purple-500/20 to-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full whitespace-nowrap font-bold flex items-center gap-1";
+        } else {
+          headerTitleBadge.textContent = "SaaS Super Admin";
+          headerTitleBadge.className = "text-[10px] sm:text-xs bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full whitespace-nowrap";
+        }
       }
     }
   } else {
@@ -2710,17 +2726,79 @@ async function fetchPlatformUsers() {
     if (countBadge) countBadge.textContent = `${users.length} مستخدم`;
 
     const roleMap = {
-      "SUPER_ADMIN": { label: "👑 مالك المنصة", class: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
+      "SUPER_ADMIN": { label: "👑 مالك منصة", class: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
       "ORG_ADMIN": { label: "🏢 مدير المنشأة", class: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
       "ACCOUNTANT": { label: "📊 محاسب قانوني", class: "bg-sky-500/20 text-sky-300 border-sky-500/30" },
       "CASHIER": { label: "🛒 كاشير فروع", class: "bg-amber-500/20 text-amber-300 border-amber-500/30" }
     };
 
+    const isCurrentRoot = currentUser && (currentUser.is_primary_owner || currentUser.username === 'superadmin');
+
     tbody.innerHTML = users.map(u => {
-      const meta = roleMap[u.role] || { label: u.role, class: "bg-slate-700 text-slate-300 border-slate-600" };
+      let meta = roleMap[u.role] || { label: u.role, class: "bg-slate-700 text-slate-300 border-slate-600" };
+      if (u.is_primary_owner) {
+        meta = {
+          label: "👑 المالك الأساسي (Super Power)",
+          class: "bg-gradient-to-r from-purple-500/30 to-amber-500/30 text-amber-200 border-amber-500/40 shadow-sm font-bold"
+        };
+      }
+
+      // Action buttons logic
+      let actionsHtml = "";
+      if (u.is_primary_owner) {
+        // Primary Owner is strictly protected
+        if (currentUser && currentUser.id === u.id) {
+          actionsHtml = `
+            <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="تغيير كلمة المرور الخاصة بك" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
+              <i data-lucide="key" class="w-3.5 h-3.5"></i>
+            </button>
+            <span title="حساب المالك الأساسي محمي من الحذف نهائياً (Super Power)" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-bold">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>محمي</span>
+            </span>
+          `;
+        } else {
+          actionsHtml = `
+            <span title="حساب المالك الأساسي محمي بشكل مطلق من الحذف أو التعديل" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800/80 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>محمي بشكل مطلق</span>
+            </span>
+          `;
+        }
+      } else if (u.role === 'SUPER_ADMIN') {
+        // Other platform owners
+        actionsHtml = `
+          <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
+            <i data-lucide="key" class="w-3.5 h-3.5"></i>
+          </button>
+          ${isCurrentRoot ? `
+            <button type="button" onclick="window.confirmDeleteUser('${u.id}', '${u.username}', true)" title="حذف حساب مالك المنصة (صلاحية السوبر باور للمالك الأساسي)" class="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 transition cursor-pointer">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          ` : `
+            <span title="فقط المالك الأساسي (Super Power) يمتلك صلاحية حذف مالكي المنصة الآخرين" class="p-1.5 text-slate-500">
+              <i data-lucide="lock" class="w-3.5 h-3.5"></i>
+            </span>
+          `}
+        `;
+      } else {
+        // Regular tenant users (ORG_ADMIN, ACCOUNTANT, CASHIER)
+        actionsHtml = `
+          <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
+            <i data-lucide="key" class="w-3.5 h-3.5"></i>
+          </button>
+          <button type="button" onclick="window.confirmDeleteUser('${u.id}', '${u.username}', false)" title="حذف المستخدم" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition cursor-pointer">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        `;
+      }
+
       return `
         <tr class="hover:bg-slate-800/40 transition">
-          <td class="p-2.5 font-mono font-bold text-white">${u.username}</td>
+          <td class="p-2.5 font-mono font-bold text-white flex items-center gap-1.5">
+            ${u.username}
+            ${u.is_primary_owner ? `<span title="صاحب الصلاحية المطلقة" class="text-amber-400 text-xs">⚡</span>` : ''}
+          </td>
           <td class="p-2.5 text-slate-200">${u.full_name || '-'}</td>
           <td class="p-2.5">
             <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${meta.class}">
@@ -2730,14 +2808,7 @@ async function fetchPlatformUsers() {
           <td class="p-2.5 text-slate-300">${u.organization_name || '<span class="text-purple-300">المنصة المركزية</span>'}</td>
           <td class="p-2.5 text-center">
             <div class="flex items-center justify-center gap-1.5">
-              <button type="button" onclick="window.openUserPasswordModal('${u.id}', '${u.username}', '${u.full_name}')" title="إعادة تعيين كلمة المرور أو توليد رابط" class="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
-                <i data-lucide="key" class="w-3.5 h-3.5"></i>
-              </button>
-              ${u.role !== 'SUPER_ADMIN' ? `
-                <button type="button" onclick="window.confirmDeleteUser('${u.id}', '${u.username}')" title="حذف المستخدم" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition cursor-pointer">
-                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                </button>
-              ` : ''}
+              ${actionsHtml}
             </div>
           </td>
         </tr>
@@ -2800,8 +2871,12 @@ window.openUserPasswordModal = (userId, username, fullName) => {
   if (window.lucide) lucide.createIcons();
 };
 
-window.confirmDeleteUser = async (userId, username) => {
-  if (!confirm(`⚠️ تحذير:\nهل أنت متأكد من حذف حساب المستخدم "${username}"؟`)) return;
+window.confirmDeleteUser = async (userId, username, isOtherSuperAdmin = false) => {
+  const confirmMsg = isOtherSuperAdmin
+    ? `⚠️ تحذير حرج (صلاحية السوبر باور للمالك الأساسي):\n\nأنت على وشك حذف حساب مالك المنصة الآخر "${username}".\nسيتم سحب كافة الصلاحيات الإدارية وحذف حسابه نهائياً من المنصة.\n\nهل أنت متأكد من تنفيذ الحذف؟`
+    : `⚠️ تحذير:\nهل أنت متأكد من حذف حساب المستخدم "${username}"؟`;
+
+  if (!confirm(confirmMsg)) return;
   try {
     const res = await authFetch(`/api/v1/admin/users/${userId}`, { method: "DELETE" });
     if (!res.ok) {

@@ -22,10 +22,15 @@ def seed_demo_data():
                 email="admin@smartops.jo",
                 hashed_password=hash_password("SuperAdmin@2026"),
                 role=UserRoleEnum.SUPER_ADMIN,
-                is_active=True
+                is_active=True,
+                is_primary_owner=True
             )
             db.add(super_admin)
             print("[Seed] Created Super Admin account: superadmin / SuperAdmin@2026")
+        else:
+            if not super_admin.is_primary_owner:
+                super_admin.is_primary_owner = True
+                db.commit()
 
         # 2. فحص أو تهيئة المنشأة الأولى: مطعم وكافيه الروشة
         org1 = db.query(Organization).filter(Organization.name.ilike("%الروشة%")).first()

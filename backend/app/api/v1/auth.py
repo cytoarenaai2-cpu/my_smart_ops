@@ -126,7 +126,8 @@ async def login(request: Request, db: Session = Depends(get_db)):
         "full_name": user.full_name,
         "email": user.email,
         "role": user.role,
-        "organization_id": user.organization_id
+        "organization_id": user.organization_id,
+        "is_primary_owner": bool(getattr(user, "is_primary_owner", False))
     }
 
     return {
@@ -167,7 +168,8 @@ def get_my_profile(
             "full_name": current_user.full_name,
             "email": current_user.email,
             "role": current_user.role,
-            "organization_id": current_user.organization_id
+            "organization_id": current_user.organization_id,
+            "is_primary_owner": bool(getattr(current_user, "is_primary_owner", False))
         },
         "organization": org_data
     }

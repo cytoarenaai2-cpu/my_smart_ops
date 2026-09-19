@@ -119,3 +119,110 @@ def test_regular_tenant_cannot_access_plans():
     headers = get_auth_header("rawsheh_admin_test", UserRoleEnum.ORG_ADMIN)
     res = client.get("/api/v1/admin/plans", headers=headers)
     assert res.status_code == 403
+
+
+def test_primary_super_admin_super_powers_and_protection():
+    db = SessionLocal()
+    # 1. Prepare Primary Super Admin (Root)
+    root_admin = db.query(User).filter(User.username == "root_super_owner").first()
+    if not root_admin:
+        root_admin = User(
+            username="root_super_owner",
+            full_name="Root Super Admin",
+            email="root@platform.jo",
+            hashed_password=hash_password("RootPass@123"),
+            role=UserRoleEnum.SUPER_ADMIN,
+            is_active=True,
+            is_primary_owner=True
+        )
+        db.add(root_admin)
+    else:
+        root_admin.is_primary_owner = True
+        root_admin.role = UserRoleEnum.SUPER_ADMIN
+
+    # 2. Prepare Secondary Super Admin
+    secondary_admin = db.query(User).filter(User.username == "secondary_super_admin").first()
+    if not secondary_admin:
+        secondary_admin = User(
+            username="secondary_super_admin",
+            full_name="Secondary Super Admin",
+            email="secondary@platform.jo",
+            hashed_password=hash_password("SecPass@123"),
+            role=UserRoleEnum.SUPER_ADMIN,
+            is_active=True,
+            is_primary_owner=False
+        )
+        db.add(secondary_admin)
+    else:
+        secondary_admin.is_primary_owner = False
+        secondary_admin.role = UserRoleEnum.SUPER_ADMIN
+
+    # 3. Prepare Another Secondary Super Admin to be deleted
+    other_super = db.query(User).filter(User.username == "disposable_super_admin").first()
+    if not other_super:
+        other_super = User(
+            username="disposable_super_admin",
+            full_name="Disposable Super Admin",
+            email="disposable@platform.jo",
+            hashed_password=hash_password("DispPass@123"),
+            role=UserRoleEnum.SUPER_ADMIN,
+            is_active=True,
+            is_primary_owner=False
+        )
+        db.add(other_super)
+
+    db.commit()
+    db.refresh(root_admin)
+    db.refresh(secondary_admin)
+    db.refresh(other_super)
+
+    root_id = root_admin.id
+    secondary_id = secondary_admin.id
+    other_id = other_super.id
+    db.close()
+
+    root_token = create_access_token({"sub": root_id, "username": "root_super_owner", "role": UserRoleEnum.SUPER_ADMIN})
+    root_headers = {"Authorization": f"Bearer {root_token}"}
+
+    sec_token = create_access_token({"sub": secondary_id, "username": "secondary_super_admin", "role": UserRoleEnum.SUPER_ADMIN})
+    sec_headers = {"Authorization": f"Bearer {sec_token}"}
+
+    # Test A: Secondary admin cannot delete the Root primary owner (403 Forbidden)
+    res_del_root_by_sec = client.delete(f"/api/v1/admin/users/{root_id}", headers=sec_headers)
+    assert res_del_root_by_sec.status_code == 403
+    assert "المالك الأساسي" in res_del_root_by_sec.json()["detail"]
+
+    # Test B: Secondary admin cannot delete another Super Admin (403 Forbidden)
+    res_del_other_by_sec = client.delete(f"/api/v1/admin/users/{other_id}", headers=sec_headers)
+    assert res_del_other_by_sec.status_code == 403
+    assert "فقط المالك الأساسي" in res_del_other_by_sec.json()["detail"]
+
+    # Test C: Secondary admin cannot reset root admin password or generate reset link
+    res_reset_pass = client.post(
+        f"/api/v1/admin/users/{root_id}/reset-password",
+        headers=sec_headers,
+        json={"new_password": "NewSecret@123"}
+    )
+    assert res_reset_pass.status_code == 403
+
+    res_reset_link = client.post(
+        f"/api/v1/admin/users/{root_id}/generate-reset-link",
+        headers=sec_headers
+    )
+    assert res_reset_link.status_code == 403
+
+    # Test D: Root admin CANNOT delete themselves (400 Bad Request)
+    res_self_del = client.delete(f"/api/v1/admin/users/{root_id}", headers=root_headers)
+    assert res_self_del.status_code == 400
+
+    # Test E: Root admin CAN delete the other Super Admin (Super Power!)
+    res_del_by_root = client.delete(f"/api/v1/admin/users/{other_id}", headers=root_headers)
+    assert res_del_by_root.status_code == 200
+    assert "تم حذف المستخدم" in res_del_by_root.json()["message"]
+
+    # Verify other_super is indeed removed from db
+    db2 = SessionLocal()
+    deleted_check = db2.query(User).filter(User.id == other_id).first()
+    assert deleted_check is None
+    db2.close()
+

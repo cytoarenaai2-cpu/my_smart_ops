@@ -87,6 +87,7 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(String(30), default=UserRoleEnum.ORG_ADMIN, nullable=False)  # SUPER_ADMIN, ORG_ADMIN, ACCOUNTANT, CASHIER
     is_active = Column(Boolean, default=True)
+    is_primary_owner = Column(Boolean, default=False, nullable=False)  # مالك المنصة الأساسي ذو الصلاحية المطلقة (Super Power)
     reset_token = Column(String(255), nullable=True)
     reset_token_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now)

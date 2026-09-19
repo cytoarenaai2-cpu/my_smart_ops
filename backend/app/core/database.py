@@ -52,6 +52,13 @@ def init_db():
         except Exception:
             pass
 
+        try:
+            from sqlalchemy import text
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_primary_owner BOOLEAN DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            pass
+
     # Seed default subscription plans if table is empty
     with SessionLocal() as db_session:
         from app.models.schema import SubscriptionPlan
@@ -143,6 +150,21 @@ def init_db():
                 )
                 db_session.add(contact)
                 db_session.commit()
+        except Exception:
+            db_session.rollback()
+
+        from app.models.schema import User, UserRoleEnum
+        try:
+            primary = db_session.query(User).filter(User.is_primary_owner == True).first()
+            if not primary:
+                super_user = db_session.query(User).filter(
+                    (User.username == "superadmin") | (User.email == "yazeedbaniissa@gmail.com")
+                ).first()
+                if not super_user:
+                    super_user = db_session.query(User).filter(User.role == UserRoleEnum.SUPER_ADMIN).order_by(User.created_at.asc()).first()
+                if super_user:
+                    super_user.is_primary_owner = True
+                    db_session.commit()
         except Exception:
             db_session.rollback()
 
